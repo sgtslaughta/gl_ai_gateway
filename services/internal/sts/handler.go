@@ -26,6 +26,7 @@ type Handler struct {
 	signer    *token.Signer
 	lookup    LookupFunc
 	now       func() time.Time
+	mux       http.Handler
 
 	auditMu sync.Mutex
 	audit   io.Writer
@@ -34,7 +35,8 @@ type Handler struct {
 // NewHandler builds the STS http.Handler. verifiers is keyed by issuer URL.
 func NewHandler(cfg Config, verifiers map[string]*token.Verifier, signer *token.Signer, lookup LookupFunc, audit io.Writer) http.Handler {
 	h := &Handler{cfg: cfg, verifiers: verifiers, signer: signer, lookup: lookup, audit: audit, now: time.Now}
-	return h.routes()
+	h.mux = h.routes()
+	return h
 }
 
 func (h *Handler) routes() http.Handler {
@@ -66,10 +68,8 @@ type auditRecord struct {
 func (h *Handler) decide(w http.ResponseWriter, c GitLabClaims, dn string, status int, reason string, resp any) {
 	rec := auditRecord{h.now().UTC().Format(time.RFC3339), c.UserLogin, c.UserID, dn, c.ProjectPath,
 		c.Ref, c.SHA, c.PipelineID, c.JobID, c.RunnerID, status, reason}
-	if b, err := json.Marshal(rec); err == nil && h.audit != nil {
-		h.auditMu.Lock()
-		h.audit.Write(append(b, '\n'))
-		h.auditMu.Unlock()
+	if !h.writeAudit(rec) {
+		status, reason, resp = http.StatusInternalServerError, "audit_failed", nil
 	}
 	if resp == nil {
 		resp = map[string]string{"error": reason}
@@ -148,3 +148,18 @@ func (h *Handler) verifierFor(raw string) *token.Verifier {
 	}
 	return h.verifiers[rc.Issuer]
 }
+
+// writeAudit writes one JSON line; false means the decision must not stand.
+func (h *Handler) writeAudit(rec auditRecord) bool {
+	b, err := json.Marshal(rec)
+	if err != nil || h.audit == nil {
+		return false
+	}
+	h.auditMu.Lock()
+	defer h.auditMu.Unlock()
+	_, err = h.audit.Write(append(b, '\n'))
+	return err == nil
+}
+
+// ServeHTTP implements http.Handler.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }

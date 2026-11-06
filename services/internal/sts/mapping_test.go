@@ -2,8 +2,10 @@ package sts
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -55,6 +57,7 @@ type stubConn struct {
 	entries []*ldap.Entry
 	filter  string
 	bound   bool
+	timeout time.Duration
 }
 
 func (s *stubConn) Bind(u, p string) error { s.bound = p == "pw"; return nil }
@@ -62,7 +65,8 @@ func (s *stubConn) Search(r *ldap.SearchRequest) (*ldap.SearchResult, error) {
 	s.filter = r.Filter
 	return &ldap.SearchResult{Entries: s.entries}, nil
 }
-func (s *stubConn) Close() error { return nil }
+func (s *stubConn) Close() error               { return nil }
+func (s *stubConn) SetTimeout(d time.Duration) { s.timeout = d }
 
 func TestLDAPLookupExactlyOne(t *testing.T) {
 	e := func(dn string) *ldap.Entry { return &ldap.Entry{DN: dn} }
@@ -85,5 +89,27 @@ func TestLDAPLookupExactlyOne(t *testing.T) {
 func TestLDAPSOnly(t *testing.T) {
 	if _, err := NewLDAPLookup(DirectoryConfig{URL: "ldap://x.example.internal"}); err == nil {
 		t.Fatal("plain ldap accepted")
+	}
+}
+
+func TestDirTLSConfig(t *testing.T) {
+	c := dirTLSConfig()
+	if c.InsecureSkipVerify || c.MinVersion < tls.VersionTLS12 {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestLDAPTimeoutFromContext(t *testing.T) {
+	s := &stubConn{entries: []*ldap.Entry{{DN: "cn=a"}}}
+	f := newLookup(DirectoryConfig{}, func() (ldapConn, error) { return s, nil }, func() (string, error) { return "pw", nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := f(ctx, "a@example.internal"); err != nil || s.timeout <= 0 || s.timeout > 2*time.Second {
+		t.Fatal(err, s.timeout)
+	}
+	done, c2 := context.WithCancel(context.Background())
+	c2()
+	if _, err := f(done, "a@example.internal"); err == nil {
+		t.Fatal("cancelled ctx accepted")
 	}
 }

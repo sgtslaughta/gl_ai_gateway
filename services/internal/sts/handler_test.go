@@ -218,3 +218,16 @@ func TestLoadConfigRejectsLongTTL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+func TestAuditFailureFailsClosed(t *testing.T) {
+	e := newEnv(t, okLookup)
+	e.sts.(*Handler).audit = failWriter{}
+	w := e.post(exchange(e.idToken(t, nil)))
+	if w.Code != 500 || !strings.Contains(w.Body.String(), "audit_failed") || strings.Contains(w.Body.String(), "access_token") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

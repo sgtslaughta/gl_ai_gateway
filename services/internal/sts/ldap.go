@@ -2,10 +2,13 @@ package sts
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -14,8 +17,19 @@ import (
 type ldapConn interface {
 	Bind(user, pass string) error
 	Search(*ldap.SearchRequest) (*ldap.SearchResult, error)
+	SetTimeout(time.Duration)
 	Close() error
 }
+
+// dirTLSConfig is the TLS config for directory connections: verification on.
+func dirTLSConfig() *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS12}
+}
+
+const (
+	dialTimeout = 5 * time.Second
+	opTimeout   = 10 * time.Second
+)
 
 // NewLDAPLookup returns a LookupFunc backed by the configured LDAPS
 // directory. The bind password is read from BindPasswordFile on each call.
@@ -23,7 +37,11 @@ func NewLDAPLookup(d DirectoryConfig) (LookupFunc, error) {
 	if !strings.HasPrefix(d.URL, "ldaps://") {
 		return nil, errors.New("directory url must use ldaps://")
 	}
-	dial := func() (ldapConn, error) { return ldap.DialURL(d.URL) }
+	dial := func() (ldapConn, error) {
+		return ldap.DialURL(d.URL,
+			ldap.DialWithDialer(&net.Dialer{Timeout: dialTimeout}),
+			ldap.DialWithTLSConfig(dirTLSConfig()))
+	}
 	return newLookup(d, dial, func() (string, error) {
 		b, err := os.ReadFile(d.BindPasswordFile)
 		return strings.TrimRight(string(b), "\r\n"), err
@@ -36,6 +54,13 @@ func newLookup(d DirectoryConfig, dial func() (ldapConn, error), password func()
 		attr = "mail"
 	}
 	return func(ctx context.Context, email string) (string, error) {
+		timeout := opTimeout
+		if dl, ok := ctx.Deadline(); ok {
+			timeout = time.Until(dl)
+		}
+		if timeout <= 0 || ctx.Err() != nil {
+			return "", errors.New("directory deadline exceeded")
+		}
 		pw, err := password()
 		if err != nil {
 			return "", errors.New("directory password unavailable")
@@ -45,6 +70,7 @@ func newLookup(d DirectoryConfig, dial func() (ldapConn, error), password func()
 			return "", errors.New("directory unreachable")
 		}
 		defer conn.Close()
+		conn.SetTimeout(timeout)
 		if err := conn.Bind(d.BindDN, pw); err != nil {
 			return "", errors.New("directory bind failed")
 		}
