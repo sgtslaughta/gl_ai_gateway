@@ -3,19 +3,33 @@
 # CI/CD variables. SBOM, scanner and signing tools vary by network: set
 # SBOM_CMD, SCAN_CMD and SIGN_CMD to the approved tools, or leave SIGN_CMD empty.
 # Not yet run against a real registry (deferred to the owner's network).
+#
+# Gate: candidates are pushed to STAGING_REPO, which is OUTSIDE ai-hardened/
+# (allowed_images is ai-hardened/*). Only the release job writes to ai-hardened/,
+# and it promotes the exact scanned digest, never a mutable tag.
+# Required masked CI variables: REGISTRY_USER, REGISTRY_PASSWORD (push rights to
+# the staging repo and, for the release job only, to ai-hardened/).
 
 variables:
   REGISTRY: registry.example.internal
-  IMAGE_NAME: ai-hardened/ai-base
+  STAGING_REPO: registry.example.internal/ai-staging/ai-base   # not under ai-hardened/
+  RELEASE_REPO: registry.example.internal/ai-hardened/ai-base
   BASE_IMAGE: registry.example.internal/approved/debian:bookworm-slim  # pin @sha256:<digest> here
   APT_MIRROR: ""                     # e.g. https://mirror.example.internal/debian
+  DOCKER_CLI_IMAGE: registry.example.internal/approved/docker:cli      # placeholder
+  DOCKER_DIND_IMAGE: registry.example.internal/approved/docker:dind    # placeholder
+  # Remote DinD service. Alternative: a runner with a host socket or rootless
+  # buildah/podman; then drop 'services' and DOCKER_HOST and adapt the commands.
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: /certs
+  DOCKER_CERT_PATH: /certs/client
+  DOCKER_TLS_VERIFY: "1"
   RUNNER_HELPER_SRC: registry.example.internal/mirror/gitlab-runner-helper:CHANGE_ME
   RUNNER_HELPER_DST: registry.example.internal/ai-hardened/gitlab-runner-helper
   RUNNER_HELPER_VERSION: CHANGE_ME   # semver tag of the helper being mirrored
-  SBOM_CMD: ""                       # e.g. 'syft "$CANDIDATE" -o cyclonedx-json > sbom.json'
+  SBOM_CMD: ""                       # e.g. 'syft "$CANDIDATE_REF" -o cyclonedx-json > sbom.json'
   SCAN_CMD: ""                       # must exit non-zero at the agreed severity threshold
   SIGN_CMD: ""                       # optional, e.g. 'cosign sign --key ... "$IMAGE_REF"'
-  CANDIDATE: $REGISTRY/$IMAGE_NAME:candidate-$CI_COMMIT_SHORT_SHA
 
 stages: [test, build, verify, release]
 
@@ -26,25 +40,40 @@ workflow:
 default:
   tags: [image-build]               # placeholder runner tag
 
+.docker:
+  image: $DOCKER_CLI_IMAGE
+  services:
+    - name: $DOCKER_DIND_IMAGE
+      alias: docker
+  before_script:
+    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
+
 unit-tests:
   stage: test
-  image: python:3-slim
+  image: python:3-slim              # placeholder: use an approved Python image
   script:
     - apt-get update -qq && apt-get install -y -qq curl jq shellcheck
     - python3 -m unittest discover image/tests
     - shellcheck -s sh image/ai-token image/tests/smoke.sh
 
 build:
+  extends: .docker
   stage: build
-  image: docker:cli
   script:
+    - CANDIDATE=$STAGING_REPO:candidate-$CI_COMMIT_SHORT_SHA
     - docker build --build-arg BASE_IMAGE="$BASE_IMAGE" --build-arg APT_MIRROR="$APT_MIRROR" -t "$CANDIDATE" image
-    - docker run --rm -v "$PWD/image/tests:/t:ro" "$CANDIDATE" sh /t/smoke.sh
+    - docker run --rm -i "$CANDIDATE" sh -s < image/tests/smoke.sh   # no bind mount (remote daemon)
     - docker push "$CANDIDATE"
+    - DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$CANDIDATE")
+    - echo "CANDIDATE_REF=$DIGEST" > build.env
+  artifacts:
+    reports:
+      dotenv: build.env
 
 sbom:
+  extends: .docker
   stage: verify
-  image: docker:cli
+  needs: [build]
   script:
     - '[ -n "$SBOM_CMD" ] || { echo "SBOM_CMD is not set"; exit 1; }'
     - sh -c "$SBOM_CMD"
@@ -53,24 +82,27 @@ sbom:
     expire_in: 90 days
 
 scan:
+  extends: .docker
   stage: verify
-  image: docker:cli
+  needs: [build]
   script:
     - '[ -n "$SCAN_CMD" ] || { echo "SCAN_CMD is not set"; exit 1; }'
     - sh -c "$SCAN_CMD"
 
 release:
+  extends: .docker
   stage: release
-  image: docker:cli
+  needs: [build, sbom, scan]       # runs only if scan passed
   rules:
     - if: $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
   script:
+    - case "$RUNNER_HELPER_SRC $RUNNER_HELPER_VERSION" in *CHANGE_ME*) echo "set RUNNER_HELPER_SRC and RUNNER_HELPER_VERSION (still CHANGE_ME)"; exit 1;; esac
     - VERSION=$(cat image/VERSION)
-    - IMAGE_REF=$REGISTRY/$IMAGE_NAME:$VERSION
+    - IMAGE_REF=$RELEASE_REPO:$VERSION
     - export IMAGE_REF
     - if docker manifest inspect "$IMAGE_REF" >/dev/null 2>&1; then echo "$IMAGE_REF exists; versions are immutable, bump image/VERSION"; exit 1; fi
-    - docker pull "$CANDIDATE"
-    - docker tag "$CANDIDATE" "$IMAGE_REF"
+    - docker pull "$CANDIDATE_REF"   # the scanned digest, not a tag
+    - docker tag "$CANDIDATE_REF" "$IMAGE_REF"
     - docker push "$IMAGE_REF"
     - '[ -z "$SIGN_CMD" ] || sh -c "$SIGN_CMD"'
     # Mirror the runner helper image (not governed by allowed_images).

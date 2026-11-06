@@ -1,6 +1,8 @@
 import http.server
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import unittest
 from urllib.parse import parse_qs
@@ -23,6 +25,12 @@ class Stub(http.server.BaseHTTPRequestHandler):
         Stub.seen = {"path": self.path, "body": parse_qs(body)}
         if Stub.mode == "deny":
             code, out = 403, b'{"error":"runner_not_allowed"}'
+        elif Stub.mode == "500":
+            code, out = 500, b"internal ISSUED-LEAK"
+        elif Stub.mode == "noaccess":
+            code, out = 200, b'{"expires_in":1}'
+        elif Stub.mode == "nonjson":
+            code, out = 200, b"<html>oops</html>"
         else:
             code, out = 200, ('{"access_token":"%s","expires_in":1800}' % ISSUED).encode()
         self.send_response(code)
@@ -43,14 +51,14 @@ class TestAIToken(unittest.TestCase):
         self.srv.shutdown()
         self.srv.server_close()
 
-    def run_script(self, sts=None, cmd=". ./ai-token && env"):
+    def run_script(self, sts=None, cmd=". ./ai-token && env", path=None, shell="sh"):
         env = {
-            "PATH": os.environ["PATH"],
+            "PATH": path or os.environ["PATH"],
             "AI_ID_TOKEN": ID_TOKEN,
             "AI_STS_URL": sts or self.url,
             "AI_GATEWAY_URL": "https://gw.example.internal",
         }
-        return subprocess.run(["sh", "-c", cmd], cwd=os.path.dirname(SCRIPT),
+        return subprocess.run(shell.split() + ["-c", cmd], cwd=os.path.dirname(SCRIPT),
                               env=env, capture_output=True, text=True, timeout=30)
 
     def test_exports_and_unsets(self):
@@ -74,10 +82,26 @@ class TestAIToken(unittest.TestCase):
         self.assertEqual(b["subject_token_type"], ["urn:ietf:params:oauth:token-type:jwt"])
 
     def test_token_not_on_command_line(self):
-        with open(SCRIPT) as f:
-            src = f.read()
-        self.assertIn("subject_token@-", src)
-        self.assertNotIn("subject_token=", src)
+        d = tempfile.mkdtemp()
+        log = os.path.join(d, "argv")
+        real = shutil.which("curl")
+        stub = os.path.join(d, "curl")
+        with open(stub, "w") as f:
+            f.write('#!/bin/sh\nprintf "%%s\\n" "$@" >> %s\nexec %s "$@"\n' % (log, real))
+        os.chmod(stub, 0o755)
+        r = self.run_script(path=d + ":" + os.environ["PATH"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(log) as f:
+            argv = f.read()
+        self.assertIn("subject_token@-", argv)
+        self.assertNotIn(ID_TOKEN, argv)
+        shutil.rmtree(d)
+
+    def test_trace_does_not_leak(self):
+        r = self.run_script(cmd=". ./ai-token; echo done", shell="sh -x")
+        self.assertIn("done", r.stdout)
+        for t in (ID_TOKEN, ISSUED):
+            self.assertNotIn(t, r.stdout + r.stderr)
 
     def test_denied(self):
         Stub.mode = "deny"
@@ -92,6 +116,20 @@ class TestAIToken(unittest.TestCase):
         self.assertIn("rc=1", r.stdout)
         self.assertRegex(r.stderr, "unreachable|cannot reach|failed")
         self.assertNotIn(ID_TOKEN, r.stdout + r.stderr)
+
+    def test_failure_modes(self):
+        for mode in ("500", "noaccess", "nonjson", "deny"):
+            Stub.mode = mode
+            r = self.run_script(cmd=". ./ai-token; echo rc=$? id=${AI_ID_TOKEN:-unset} key=${OPENAI_API_KEY:-unset}")
+            self.assertIn("rc=1", r.stdout, mode)
+            self.assertIn("id=unset", r.stdout, mode)
+            self.assertIn("key=unset", r.stdout, mode)
+            self.assertNotIn("LEAK", r.stdout + r.stderr, mode)
+            self.assertNotIn(ID_TOKEN, r.stdout + r.stderr, mode)
+
+    def test_id_token_unset_on_unreachable(self):
+        r = self.run_script(sts="http://127.0.0.1:1", cmd=". ./ai-token; echo id=${AI_ID_TOKEN:-unset}")
+        self.assertIn("id=unset", r.stdout)
 
     def test_missing_vars(self):
         r = subprocess.run(["sh", "-c", ". ./ai-token; echo rc=$?"], cwd=os.path.dirname(SCRIPT),

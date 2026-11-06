@@ -8,7 +8,7 @@ ARG APT_MIRROR=
 # Optional internal package mirror (deb822 and legacy formats).
 RUN if [ -n "$APT_MIRROR" ]; then \
       for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list; do \
-        [ -f "$f" ] && sed -i -E "s#https?://[^ ]+#${APT_MIRROR}#g" "$f"; \
+        if [ -f "$f" ]; then sed -i -E "s#https?://[^ ]+#${APT_MIRROR}#g" "$f"; fi; \
       done; \
     fi
 

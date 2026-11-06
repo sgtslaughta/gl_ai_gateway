@@ -42,25 +42,45 @@ def finding(path, line, severity, description):
 
 
 def get_diff(base):
-    r = subprocess.run(["git", "diff", "--no-color", "--no-ext-diff", base + "...HEAD"],
+    r = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff",
+                        "--src-prefix=a/", "--dst-prefix=b/", base + "...HEAD"],
                        capture_output=True)
     if r.returncode != 0:
         die("git diff failed; fetch the target branch history (check GIT_DEPTH)")
     return r.stdout.decode("utf-8", "replace")
 
 
-def diff_files(diff):
-    return [m for m in re.findall(r"^\+\+\+ b/(.+)$", diff, re.M)]
+def scan_diff(diff):
+    """Return (files in new tree, files with a secret match, unattributed match, bad header).
+
+    Scans every line (added, removed, context, headers); splits on \\n only, as git does.
+    """
+    files, hits, loose, bad, cur = [], [], False, False, None
+    for line in diff.split("\n"):
+        if line.startswith("diff --git "):
+            cur = None
+        elif line.startswith("--- a/"):
+            cur = line[6:].removesuffix("\t")
+        elif line.startswith("+++ "):
+            name = line[4:].removesuffix("\t")
+            if name == "/dev/null":
+                pass
+            elif name.startswith("b/") and '"' not in name[:3]:
+                cur = name[2:]
+                files.append(cur)
+            else:
+                bad, cur = True, None
+        if SECRET_RE.search(line):
+            if cur is None:
+                loose = True
+            elif cur not in hits:
+                hits.append(cur)
+    return files, hits, loose, bad
 
 
-def secret_files(diff):
-    hits, cur = [], None
-    for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            cur = line[6:]
-        elif line.startswith("+") and cur and SECRET_RE.search(line) and cur not in hits:
-            hits.append(cur)
-    return hits
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # urlopen then raises HTTPError(3xx): a redirect is a failure
 
 
 def call_api(diff, model):
@@ -73,7 +93,7 @@ def call_api(diff, model):
         "Content-Type": "application/json",
         "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"]})
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=300) as resp:
             data = json.load(resp)
         return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:
@@ -111,15 +131,19 @@ def main():
             die("%s is not set" % v)
     model = os.environ["AI_REVIEW_MODEL"]
     diff = get_diff(os.environ["CI_MERGE_REQUEST_DIFF_BASE_SHA"])
-    files = diff_files(diff)
+    files, hits, loose, bad = scan_diff(diff)
+    check = os.environ.get("AI_REVIEW_SKIP_SECRET_CHECK") != "true"
+    secret = check and (hits or loose or bad or bool(SECRET_RE.search(diff)))
     if not diff.strip():
         out = []
     elif len(diff.encode()) > MAX_DIFF:
         out = [finding(files[0] if files else ".", 1, "info",
                        "AI review skipped: diff is too large (limit %d KiB)" % (MAX_DIFF // 1024))]
-    elif os.environ.get("AI_REVIEW_SKIP_SECRET_CHECK") != "true" and secret_files(diff):
-        out = [finding(p, 1, "info", "AI review skipped: file may contain a secret; "
-                       "nothing was sent to the model") for p in secret_files(diff)]
+    elif secret:
+        msg = ("AI review skipped: diff may contain a secret or could not be checked; "
+               "nothing was sent to the model")
+        out = [finding(p, 1, "info", msg) for p in hits] or [
+            finding(files[0] if files else ".", 1, "info", msg)]
     else:
         out = parse_findings(call_api(diff, model), set(files))
     json.dump(out, sys.stdout, indent=2)

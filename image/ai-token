@@ -3,6 +3,12 @@
 # Exchanges the GitLab ID token (AI_ID_TOKEN) at the STS for a short-lived
 # gateway token and exports the OpenAI/Anthropic client variables.
 # Uses return, not exit, because it is sourced. Never prints tokens.
+# Shell tracing (set -x) is switched off while tokens are handled and restored
+# afterwards. CI_DEBUG_TRACE cannot be fully protected: the runner itself traces
+# variables before this script runs, so never enable it on AI jobs.
+
+_ai_xtrace=0
+case $- in *x*) _ai_xtrace=1; set +x ;; esac
 
 _ai_t_fail() { echo "ai-token: $*" >&2; }
 
@@ -44,12 +50,13 @@ _ai_t_main() {
     ANTHROPIC_BASE_URL=$_ai_gw
     ANTHROPIC_API_KEY=$_ai_tok
     export OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY
-    unset AI_ID_TOKEN
 }
 
 _ai_t_main
 _ai_t_rc=$?
+unset AI_ID_TOKEN
 unset -f _ai_t_main _ai_t_fail 2>/dev/null || true
 unset _ai_v _ai_val _ai_gw _ai_out _ai_code _ai_body _ai_reason _ai_tok
+if [ "$_ai_xtrace" = 1 ]; then unset _ai_xtrace; set -x; else unset _ai_xtrace; fi
 # shellcheck disable=SC2317
 return "$_ai_t_rc" 2>/dev/null || exit "$_ai_t_rc"

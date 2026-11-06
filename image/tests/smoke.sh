@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run inside the built image: docker run --rm -v "$PWD/tests:/t:ro" IMAGE sh /t/smoke.sh
+# Run inside the built image, no bind mount needed:
+#   docker run --rm -i IMAGE sh -s < image/tests/smoke.sh
 fail=0
 bad() { echo "FAIL: $*" >&2; fail=1; }
 

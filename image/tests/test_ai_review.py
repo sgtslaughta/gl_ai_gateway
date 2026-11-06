@@ -21,9 +21,13 @@ class Stub(http.server.BaseHTTPRequestHandler):
         Stub.calls.append({"path": self.path, "auth": self.headers.get("Authorization"),
                            "body": json.loads(self.rfile.read(n))})
         code, out = Stub.reply
+        if code == 302:
+            Stub.loc_sent = True
         out = out if isinstance(out, bytes) else out.encode()
         self.send_response(code)
         self.send_header("Content-Length", str(len(out)))
+        if code == 302:
+            self.send_header("Location", Stub.location)
         self.end_headers()
         self.wfile.write(out)
 
@@ -40,6 +44,7 @@ def git(repo, *a):
 class Base(unittest.TestCase):
     content = "print('%s')\n" % MARK
     fname = "app.py"
+    base_content = None
 
     def setUp(self):
         Stub.calls, Stub.reply = [], chat("[]")
@@ -50,12 +55,15 @@ class Base(unittest.TestCase):
         git(self.repo, "init", "-q")
         with open(os.path.join(self.repo, "base.txt"), "w") as f:
             f.write("base\n")
+        if self.base_content is not None:
+            with open(os.path.join(self.repo, self.fname), "w", newline="") as f:
+                f.write(self.base_content)
         git(self.repo, "add", ".")
         git(self.repo, "commit", "-qm", "base")
         self.base = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"],
                                    capture_output=True, text=True).stdout.strip()
         if self.content is not None:
-            with open(os.path.join(self.repo, self.fname), "w") as f:
+            with open(os.path.join(self.repo, self.fname), "w", newline="") as f:
                 f.write(self.content)
             git(self.repo, "add", ".")
             git(self.repo, "commit", "-qm", "change")
@@ -173,6 +181,110 @@ class TestDiffNotPrinted(Base):
     def test_success(self):
         r = self.run_tool()
         self.assertNoLeak(r)
+
+
+class Other(http.server.BaseHTTPRequestHandler):
+    hits = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        Other.hits.append(self.headers.get("Authorization"))
+        self.send_response(200)
+        self.end_headers()
+
+    do_GET = do_POST
+
+
+class TestNoRedirect(Base):
+    def test_redirect_is_failure(self):
+        other = http.server.HTTPServer(("127.0.0.1", 0), Other)
+        threading.Thread(target=other.serve_forever, daemon=True).start()
+        Other.hits = []
+        Stub.location = "http://127.0.0.1:%d/x" % other.server_port
+        Stub.reply = (302, "")
+        r = self.run_tool()
+        other.shutdown()
+        other.server_close()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(Other.hits, [])
+        self.assertNoLeak(r)
+
+
+class TestOddFilename(Base):
+    fname = "caf\u00e9 notes.txt"
+    content = "-----BEGIN PRIVATE KEY-----\n"
+
+    def test_no_api_call(self):
+        r = self.run_tool()
+        self.assertEqual(Stub.calls, [])
+        out = json.loads(r.stdout)
+        self.assertEqual(out[0]["severity"], "info")
+        self.assertEqual(out[0]["location"]["path"], self.fname)
+
+
+class TestQuotedFilename(Base):
+    fname = 'we"ird.txt'
+    content = "-----BEGIN PRIVATE KEY-----\n"
+
+    def test_unparseable_fails_closed(self):
+        r = self.run_tool()
+        self.assertEqual(Stub.calls, [])
+        self.assertEqual(json.loads(r.stdout)[0]["severity"], "info")
+
+
+PEM = "-----BEGIN PRIVATE KEY-----"
+
+
+class SecretNoCall(Base):
+    def test_no_call(self):
+        if type(self) is SecretNoCall:
+            return
+        r = self.run_tool()
+        self.assertEqual(Stub.calls, [])
+        out = json.loads(r.stdout)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["severity"], "info")
+        self.assertNotIn("PRIVATE KEY", r.stdout + r.stderr)
+
+
+class TestRemovedLine(SecretNoCall):
+    base_content = PEM + "\nkeep\n"
+    content = "keep\n"
+
+
+class TestContextLine(SecretNoCall):
+    base_content = "a\n" + PEM + "\nz\n"
+    content = "a\n" + PEM + "\nz\nnew\n"
+
+
+class TestFormFeed(SecretNoCall):
+    content = "a\x0c" + PEM + "\n"
+
+
+class TestVerticalTab(SecretNoCall):
+    content = "a\x0b" + PEM + "\n"
+
+
+class TestUnicodeLineSep(SecretNoCall):
+    content = "a\u2028" + PEM + "\n"
+
+
+class TestNel(SecretNoCall):
+    content = "a\x85" + PEM + "\n"
+
+
+class TestUnattributable(SecretNoCall):
+    """Key text only in a rename header: no hunk line carries it."""
+    fname = "old.txt"
+    base_content = "some text here\n"
+    content = None
+
+    def setUp(self):
+        super().setUp()
+        git(self.repo, "mv", "--", "old.txt", "x " + PEM + ".txt")
+        git(self.repo, "commit", "-qm", "rename")
 
 
 class TestSecretPreCheck(Base):
