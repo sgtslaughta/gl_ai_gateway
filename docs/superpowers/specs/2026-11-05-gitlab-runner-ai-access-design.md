@@ -392,7 +392,8 @@ Owner's decision, 2026-11-06: write the initial implementation assuming these ho
 | 6 | The enclave reaches GitLab OIDC, the directory and the provider, and runners reach enclave ingress | Network paths, or JWKS sync |
 | 7 | A read-only directory service account is available to STS over LDAPS | Directory access for STS |
 | 8 | Go 1.26, a module mirror, an approved base image and a package mirror exist on the network | Build pipeline and image base |
-| 9 | The license is below Ultimate, so review findings appear only as the MR code quality report | Nothing required. Ultimate adds line-level findings |
+| 9 | Real tokens carry `job_project_path`, as GitLab documents since 18.4. The updated probe checks this | STS's fork rule, which otherwise denies every exchange |
+| 10 | The license is below Ultimate, so review findings appear only as the MR code quality report | Nothing required. Ultimate adds line-level findings |
 
 Confirmed by the baseline probe, so not assumptions: `user_email`, `user_id` and the other required claims are present, the audience matches, token lifetime tracks the job timeout, and OIDC discovery, issuer and signing key checks pass from the runner.
 
