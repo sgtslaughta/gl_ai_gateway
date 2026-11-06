@@ -14,6 +14,31 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+// Directory failure classes. They carry no
+// user data, so the handler can log them as fixed categories.
+var (
+	ErrDirUnreachable = errors.New("directory unreachable")
+	ErrDirTLS         = errors.New("directory tls verification failed")
+	ErrDirBind        = errors.New("directory bind failed")
+	ErrDirOther       = errors.New("directory error")
+)
+
+// DirCategory returns the operator-facing label for a directory outage, or
+// "" if err is not one (for example no unique match, which is a user issue).
+func DirCategory(err error) string {
+	switch {
+	case errors.Is(err, ErrDirUnreachable):
+		return "directory_unreachable"
+	case errors.Is(err, ErrDirTLS):
+		return "directory_tls"
+	case errors.Is(err, ErrDirBind):
+		return "directory_bind_failed"
+	case errors.Is(err, ErrDirOther):
+		return "directory_error"
+	}
+	return ""
+}
+
 // ldapConn is the subset of the LDAP client the lookup needs.
 type ldapConn interface {
 	Bind(user, pass string) error
@@ -61,20 +86,24 @@ func newLookup(d DirectoryConfig, dial func() (ldapConn, error), password func()
 			timeout = time.Until(dl)
 		}
 		if timeout <= 0 || ctx.Err() != nil {
-			return "", errors.New("directory deadline exceeded")
+			return "", ErrDirOther
 		}
 		pw, err := password()
 		if err != nil {
-			return "", errors.New("directory password unavailable")
+			return "", ErrDirOther
 		}
 		conn, err := dial()
 		if err != nil {
-			return "", errors.New("directory unreachable")
+			var cv *tls.CertificateVerificationError
+			if errors.As(err, &cv) {
+				return "", ErrDirTLS
+			}
+			return "", ErrDirUnreachable
 		}
 		defer conn.Close()
 		conn.SetTimeout(timeout)
 		if err := conn.Bind(d.BindDN, pw); err != nil {
-			return "", errors.New("directory bind failed")
+			return "", ErrDirBind
 		}
 		req := ldap.NewSearchRequest(d.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases,
 			2, 10, false,
@@ -82,7 +111,7 @@ func newLookup(d DirectoryConfig, dial func() (ldapConn, error), password func()
 			[]string{"dn"}, nil)
 		res, err := conn.Search(req)
 		if err != nil {
-			return "", errors.New("directory search failed")
+			return "", ErrDirOther
 		}
 		if len(res.Entries) != 1 {
 			return "", fmt.Errorf("expected 1 directory entry, got %d", len(res.Entries))

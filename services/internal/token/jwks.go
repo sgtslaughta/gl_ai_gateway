@@ -71,6 +71,9 @@ func NewSigner(keyFiles []string, issuer string) (*Signer, error) {
 	if len(keyFiles) == 0 {
 		return nil, errors.New("no signing keys")
 	}
+	if issuer == "" {
+		return nil, errors.New("signer issuer is required")
+	}
 	s := &Signer{issuer: issuer}
 	var set jwks
 	for _, f := range keyFiles {

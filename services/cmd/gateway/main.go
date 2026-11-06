@@ -45,6 +45,9 @@ func main() {
 	if err := harden.RequireHTTPS(jwksURL); err != nil {
 		log.Fatal("GATEWAY_STS_JWKS_URL: ", err)
 	}
+	for _, n := range []string{"GATEWAY_STS_ISSUER", "GATEWAY_AUDIENCE"} {
+		must(harden.RequireNonEmpty(n, os.Getenv(n)))
+	}
 	v := token.NewVerifier(jwksURL, os.Getenv("GATEWAY_STS_ISSUER"), os.Getenv("GATEWAY_AUDIENCE"), jwksClient)
 	cfg := gateway.Config{UpstreamURL: os.Getenv("GATEWAY_UPSTREAM_URL"), BatchServiceURL: os.Getenv("GATEWAY_BATCH_URL")}
 	if s := os.Getenv("GATEWAY_MAX_BODY_BYTES"); s != "" {

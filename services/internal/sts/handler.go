@@ -3,8 +3,10 @@ package sts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -30,11 +32,12 @@ type Handler struct {
 
 	auditMu sync.Mutex
 	audit   io.Writer
+	opLog   io.Writer // operator log, fixed categories only; stderr by default
 }
 
 // NewHandler builds the STS http.Handler. verifiers is keyed by issuer URL.
 func NewHandler(cfg Config, verifiers map[string]*token.Verifier, signer *token.Signer, lookup LookupFunc, audit io.Writer) http.Handler {
-	h := &Handler{cfg: cfg, verifiers: verifiers, signer: signer, lookup: lookup, audit: audit, now: time.Now}
+	h := &Handler{cfg: cfg, verifiers: verifiers, signer: signer, lookup: lookup, audit: audit, now: time.Now, opLog: os.Stderr}
 	h.mux = h.routes()
 	return h
 }
@@ -95,7 +98,12 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	v := h.verifierFor(raw)
 	var c GitLabClaims
-	if v == nil || v.Verify(r.Context(), raw, &c) != nil {
+	if v == nil {
+		h.decide(w, none, "", http.StatusUnauthorized, "invalid_token", nil)
+		return
+	}
+	if err := v.Verify(r.Context(), raw, &c); err != nil {
+		h.outage(token.Category(err))
 		h.decide(w, none, "", http.StatusUnauthorized, "invalid_token", nil)
 		return
 	}
@@ -105,7 +113,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	dn, err := MapDN(ctx, c, h.lookup)
+	dn, err := MapDN(ctx, c, h.observed)
 	if err != nil {
 		h.decide(w, c, "", http.StatusForbidden, err.Error(), nil)
 		return
@@ -138,6 +146,27 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		"token_type":        "Bearer",
 		"expires_in":        int(exp.Sub(now).Seconds()),
 	})
+}
+
+// outage writes one fixed-category line for the operator. No token, email or
+// DN ever goes here. An empty category writes nothing.
+func (h *Handler) outage(category string) {
+	if category != "" {
+		fmt.Fprintf(h.opLog, "sts: outage category=%s\n", category)
+	}
+}
+
+// observed wraps the directory lookup so outages reach the operator log
+// while MapDN still turns every failure into identity_not_mapped.
+func (h *Handler) observed(ctx context.Context, email string) (string, error) {
+	if h.lookup == nil {
+		return "", ErrIdentityNotMapped
+	}
+	dn, err := h.lookup(ctx, email)
+	if err != nil {
+		h.outage(DirCategory(err))
+	}
+	return dn, err
 }
 
 // verifierFor picks the verifier by the unverified iss claim. The chosen

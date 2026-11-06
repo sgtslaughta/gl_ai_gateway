@@ -52,3 +52,11 @@ func ServeTLS(srv *http.Server, certFile, keyFile string) error {
 func NoRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
+
+// RequireNonEmpty returns an error naming a required setting that is empty.
+func RequireNonEmpty(name, value string) error {
+	if value == "" {
+		return errors.New(name + " is required")
+	}
+	return nil
+}

@@ -4,6 +4,7 @@ package token
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,28 @@ const (
 	jwksRefreshAfter = 10 * time.Minute
 	jwksMaxStale     = 24 * time.Hour
 )
+
+// Sentinels for key-source failures. They are wrapped into the errors from
+// Verify so operators can tell an outage from a bad token (see Category).
+var (
+	ErrJWKSUnreachable = errors.New("jwks unreachable")
+	ErrJWKSTLS         = errors.New("jwks tls verification failed")
+	ErrJWKSStale       = errors.New("jwks too stale")
+)
+
+// Category returns a fixed operator-facing label if err was caused by the
+// key source rather than the presented token, or "" otherwise.
+func Category(err error) string {
+	switch {
+	case errors.Is(err, ErrJWKSStale):
+		return "jwks_stale"
+	case errors.Is(err, ErrJWKSTLS):
+		return "jwks_tls"
+	case errors.Is(err, ErrJWKSUnreachable):
+		return "jwks_unreachable"
+	}
+	return ""
+}
 
 // Verifier verifies RS256 JWTs against a remote JWKS.
 type Verifier struct {
@@ -84,6 +107,11 @@ func (v *Verifier) Verify(ctx context.Context, raw string, into jwt.Claims) erro
 		return v.key(ctx, kid)
 	})
 	if err != nil {
+		for _, e := range []error{ErrJWKSStale, ErrJWKSTLS, ErrJWKSUnreachable} {
+			if errors.Is(err, e) {
+				return fmt.Errorf("token invalid: %s: %w", sanitize(err), e)
+			}
+		}
 		return fmt.Errorf("token invalid: %s", sanitize(err))
 	}
 	// Require exactly one audience, equal to ours.
@@ -123,7 +151,7 @@ func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) 
 			return ok && a <= jwksRefreshAfter
 		})
 		if a, _ := v.keyAge(); err != nil && a > jwksMaxStale {
-			return nil, errors.New("jwks too stale")
+			return nil, ErrJWKSStale
 		}
 	}
 	if k, ok := v.lookup(kid); ok {
@@ -186,19 +214,23 @@ func (v *Verifier) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.url, nil)
 	if err != nil {
-		return nil, errors.New("jwks request failed")
+		return nil, ErrJWKSUnreachable
 	}
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return nil, errors.New("jwks fetch failed")
+		var cv *tls.CertificateVerificationError
+		if errors.As(err, &cv) {
+			return nil, ErrJWKSTLS
+		}
+		return nil, ErrJWKSUnreachable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jwks fetch status %d", resp.StatusCode)
+		return nil, ErrJWKSUnreachable
 	}
 	var set jwks
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&set); err != nil {
-		return nil, errors.New("jwks decode failed")
+		return nil, ErrJWKSUnreachable
 	}
 	keys := map[string]*rsa.PublicKey{}
 	for _, j := range set.Keys {
@@ -207,7 +239,7 @@ func (v *Verifier) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error)
 		}
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("jwks has no valid keys")
+		return nil, ErrJWKSUnreachable
 	}
 	return keys, nil
 }

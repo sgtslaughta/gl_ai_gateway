@@ -47,6 +47,10 @@ func TestMapDNDenials(t *testing.T) {
 		"CR":        lk("cn=a\r,dc=x", nil, nil),
 		"LF":        lk("cn=a\n,dc=x", nil, nil),
 		"NUL":       lk("cn=a\x00,dc=x", nil, nil),
+		"TAB":       lk("cn=a\t,dc=x", nil, nil),
+		"ESC":       lk("cn=a\x1b,dc=x", nil, nil),
+		"US":        lk("cn=a\x1f,dc=x", nil, nil),
+		"DEL":       lk("cn=a\x7f,dc=x", nil, nil),
 	} {
 		if _, err := MapDN(context.Background(), c, f); !errors.Is(err, ErrIdentityNotMapped) {
 			t.Errorf("%s: got %v", name, err)

@@ -53,6 +53,7 @@ type handler struct {
 	tr       http.RoundTripper
 	auditMu  sync.Mutex
 	audit    io.Writer
+	opLog    io.Writer // operator log, fixed categories only; stderr by default
 }
 
 // NewHandler builds the gateway handler. The upstream must be a valid https
@@ -68,7 +69,7 @@ func NewHandler(cfg Config, v *token.Verifier, transport http.RoundTripper, audi
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return nil, errors.New("gateway: upstream URL must be a valid https URL")
 	}
-	return &handler{cfg: cfg, upstream: u, v: v, tr: transport, audit: audit}, nil
+	return &handler{cfg: cfg, upstream: u, v: v, tr: transport, audit: audit, opLog: os.Stderr}, nil
 }
 
 // countBody counts bytes read from a request body.
@@ -127,7 +128,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := ExtractToken(r.Header)
 	var c token.Claims
-	if err != nil || h.v.Verify(r.Context(), raw, &c) != nil || !validClaims(c) {
+	if err == nil {
+		if err = h.v.Verify(r.Context(), raw, &c); err != nil {
+			if cat := token.Category(err); cat != "" {
+				fmt.Fprintf(h.opLog, "gateway: outage category=%s\n", cat)
+			}
+		}
+	}
+	if err != nil || !validClaims(c) {
 		http.Error(cw, "unauthorized", http.StatusUnauthorized)
 		return
 	}

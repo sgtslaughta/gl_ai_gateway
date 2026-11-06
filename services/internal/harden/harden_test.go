@@ -55,3 +55,12 @@ func TestNoRedirect(t *testing.T) {
 		t.Fatalf("redirect followed: hits=%d status=%d", hits, resp.StatusCode)
 	}
 }
+
+func TestRequireNonEmpty(t *testing.T) {
+	if err := RequireNonEmpty("X", ""); err == nil || err.Error() != "X is required" {
+		t.Fatal(err)
+	}
+	if err := RequireNonEmpty("X", "v"); err != nil {
+		t.Fatal(err)
+	}
+}
