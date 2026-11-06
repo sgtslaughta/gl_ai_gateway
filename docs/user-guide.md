@@ -27,6 +27,10 @@ merge request pipelines and does not block merging if the AI is down.
 Findings show in the merge request code quality report. Line-level notes may
 not appear on your GitLab tier. If they do not, open the `review.json` artifact.
 
+The review model comes from `AI_REVIEW_MODEL`. The template ships a placeholder
+(`example-model`); your platform team replaces it with a model name the provider
+serves, or you can override the variable in your job.
+
 ## Custom jobs
 Extend `.ai-access`. It sets the runner tag, the image, the ID token and the
 token exchange. It exports these variables:
@@ -43,6 +47,10 @@ summarize:
 
 The key is a short-lived token (30 minutes at most, never longer than the job's
 own ID token). Do not save it, print it or put it in an artifact.
+
+Warning: a `before_script` in your own job **replaces** the one from `.ai-access`,
+which runs `. ai-token`. If you set one, start it with `. ai-token` or no token
+or variables will exist. Prefer putting your setup in `script`.
 
 Allowed gateway routes: `POST /v1/chat/completions`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`, `POST /v1/embeddings`, `GET /v1/models`.

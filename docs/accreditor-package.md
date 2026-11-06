@@ -50,6 +50,8 @@ a time-limited grant with their own certificate). That is not built.
 - Key caches: STS and the gateway refresh keys every 10 minutes. If the source is down or empty, they keep cached keys for up to 24 hours. A revoked key can stay trusted that long unless the service is restarted.
 - Audit holds metadata only. No prompts or responses are stored in any new component.
 - Runners: no privileged mode, non-root, ephemeral pods, network policy deny by default, images only from the hardened registry path.
+- Open channels, disclosed: DNS is allowed from job pods to the cluster resolver and is an open channel (names can carry data out). Job egress to the shared ingress address reaches every host served on that ingress IP, not only STS and the gateway, because the network policy filters by address and port, not by host name.
+- Owner decision before production: the ingress-nginx project announced its retirement (March 2026, no security fixes afterwards; confirm the current status). Decide whether to keep it, replace it with a supported controller or the Gateway API, and who patches it.
 
 ## Deviation from the design: package tooling in the image
 The design says to remove the package manager from `ai-base`. The image

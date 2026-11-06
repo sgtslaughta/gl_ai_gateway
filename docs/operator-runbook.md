@@ -23,9 +23,24 @@ What this means:
 **Emergency: clear cached keys.** If a GitLab or STS signing key is
 compromised, restart the service so it drops its cache and fetches fresh keys.
 - Compromised GitLab signing key: restart STS.
-- Compromised STS signing key: replace it with a fresh key (see rotation), then restart STS and the gateway. Do not just delete the file. `STS_SIGNING_KEYS` lists both `current.pem` and `next.pem`, and a missing file stops STS from starting.
+- Compromised STS signing key: overwrite **both** `current.pem` and `next.pem` with fresh keys, then restart STS and the gateway. Never promote (swap) in an emergency: that moves the compromised key into `next.pem`, where it stays published and trusted. Do not just delete a file. `STS_SIGNING_KEYS` lists both `current.pem` and `next.pem`, and a missing file stops STS from starting.
 - Restart with the normal rollout tool for the pod. Check pod readiness and run one test job afterwards.
 - Restart only after the source publishes the corrected key set. A restart clears the cache, so while the source is down or empty the service starts with no keys and denies everything.
+
+## Outage log lines
+Failures that users see only as `invalid_token`, `identity_not_mapped` or HTTP 401 also write one fixed line to the process error output (stderr). The lines hold a category only, never token content, emails or DNs. Alert on them.
+
+| Line | Meaning | Check |
+|---|---|---|
+| `sts: outage category=jwks_unreachable` / `gateway: outage category=jwks_unreachable` | The key source (GitLab, or STS for the gateway) is down, returned an error or an unusable key set | Network path, source health |
+| `... category=jwks_tls` | TLS to the key source failed verification | `sts-ca` or `gateway-ca` content, source certificate expiry |
+| `... category=jwks_stale` | Cached keys are older than 24 hours and the source is still failing. All exchanges or calls are denied | Fix the source, then see the section above |
+| `sts: outage category=directory_unreachable` | Cannot connect to the directory | Network path, LDAP server |
+| `sts: outage category=directory_tls` | Directory certificate not trusted | `sts-ca`, LDAP certificate |
+| `sts: outage category=directory_bind_failed` | The read-only bind account was refused | `sts-directory-bind` password, account state |
+| `sts: outage category=directory_error` | Search failed, timed out, or the bind password file is unreadable | Directory load, secret mount |
+
+While the key source is down but the cache is under 24 hours old, requests still succeed and no line is written. Watch the source separately. A missing or ambiguous directory match is a user problem, not an outage, and writes no line.
 
 ## Audit failures
 STS must write an audit record for every decision. If the write fails, STS
@@ -39,9 +54,9 @@ AI jobs failing.
 Secret `sts-signing-keys` holds `current.pem` and `next.pem`.
 1. Generate a new key. Put it in `next.pem`. Keep `current.pem`. Roll out STS. Both keys are published.
 2. Wait until the gateway has fetched the new key. Only key publication matters here. A token with an unknown key ID makes the gateway refresh on demand, limited to once a minute, so the wait is short. Confirm with a test job.
-3. Promote: swap so the new key is `current.pem`. Roll out STS.
+3. Promote (normal rotation only): copy `next.pem` to `current.pem`. Roll out STS. The old key stays in `next.pem`, published, until step 4 replaces it.
 4. After 30 more minutes (old tokens expired), put a fresh key in `next.pem`.
-5. If the old key was compromised, skip waiting: promote, roll out, then restart STS and the gateway to clear caches.
+5. If the key was compromised, do not promote and do not wait. Overwrite both `current.pem` and `next.pem` with fresh keys, roll out STS, then restart STS and the gateway to clear caches. Tokens signed by the old key stop working at once.
 Use an HSM or Vault if one exists. Record each rotation date.
 
 ## TLS and client certificates

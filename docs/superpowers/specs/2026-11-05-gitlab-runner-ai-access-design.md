@@ -146,6 +146,8 @@ LiteLLM also offers optional secret detection and PII guardrails. They aren't us
 
 STS and gateway emit metadata to the SIEM: user, DN, project, ref, SHA, pipeline, job, runner, path, status, bytes, duration, request ID. No prompts or responses. STS also records the token's `user_id`. Retention follows existing policy.
 
+In v1 the gateway's `x-litellm-call-id` response header serves as the request ID in the audit record (`call_id`). The gateway does not generate its own.
+
 **Designer's call:** the owner approved logging model and token usage, but a pass-through gateway cannot read them without parsing bodies. Join them from provider records using `x-litellm-call-id` instead, along with the CI context set by the gateway. If the provider cannot supply those records, fall back to request count and bytes.
 
 Alert on unusually high usage per job, and handle it by contacting the user.
