@@ -133,7 +133,7 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 
 - [ ] **Step 1: Write failing policy tests**
 
-`CheckPolicy` returns an error for a `runner_id` not in `RunnerIDs`, and for `pipeline_source == "schedule"` with `ref_protected != "true"`. It passes for a listed runner on a push, and for a schedule on a protected ref.
+`CheckPolicy` returns an error for a `runner_id` not in `RunnerIDs`, and for `ref_protected != "true"` unless `pipeline_source` is `push`, `web` or `merge_request_event` (including `schedule`, `trigger`, `pipeline`, `parent_pipeline`, `api` and empty). It passes for a listed runner on a push, and for a schedule on a protected ref.
 
 - [ ] **Step 2: Write failing mapping tests**
 
@@ -151,7 +151,7 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 - `exp` is `min(now+TokenTTL, idToken.exp)`, including a case where the ID token expires in 5 minutes.
 - `TokenTTL` above 30 minutes is rejected at config load.
 - Wrong `grant_type` or `subject_token_type` returns 400.
-- Invalid token returns 401. Policy or mapping denial returns 403 with a short reason code such as `runner_not_allowed`, `schedule_ref_not_protected` or `identity_not_mapped`.
+- Invalid token returns 401. Policy or mapping denial returns 403 with a short reason code such as `runner_not_allowed`, `ref_not_protected` or `identity_not_mapped`.
 - Log output and responses never contain the subject token.
 - Each decision writes one JSON audit line: user, `user_id`, DN, project, ref, SHA, pipeline, job, runner, status, reason.
 
@@ -463,7 +463,7 @@ Jobs in `tests/pilot/.gitlab-ci.yml`, run in a non-sensitive test project:
 - `CI_DEBUG_TRACE` set, then search the log for token material. Try forcing it off with runner `environment`.
 - Spoofed `X-Proxied-Entity` and spoofed `user` and `metadata` body fields: attribution and limits are unchanged in provider records.
 - `/v1/batches`, a LiteLLM admin route, and oversized requests: all rejected.
-- Scheduled pipeline on an unprotected ref: no token.
+- Scheduled, trigger and child pipelines on an unprotected ref: no token.
 - Job on an unlisted runner: no token.
 - OpenAI and Anthropic-style calls, streaming and non-streaming, attributed to the right user.
 
