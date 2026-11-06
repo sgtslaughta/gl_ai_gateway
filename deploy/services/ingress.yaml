@@ -1,8 +1,20 @@
-# TLS terminates here; services speak plain HTTP inside the cluster.
+# TLS terminates here and is re-encrypted to the services (they serve TLS only).
 # TLS secret "ai-services-tls" is created out of band.
+# Backend certificates are not verified by default; to verify, add the
+# proxy-ssl-verify annotations with the internal CA.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata: {name: ai-services, namespace: ai-services}
+metadata:
+  name: ai-services
+  namespace: ai-services
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    # Gateway limits: 10 MiB body cap, long streams, no buffering.
+    # (Applies to the whole Ingress; STS requests are tiny so this is harmless.)
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
 spec:
   ingressClassName: nginx
   tls:

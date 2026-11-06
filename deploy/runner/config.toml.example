@@ -18,13 +18,41 @@ concurrent = 2          # pilot: low
     allowed_images = ["registry.example.internal/ai-hardened/*"]
     allowed_services = ["registry.example.internal/ai-hardened/*"]
     allowed_pull_policies = ["always"]
-    allowed_users = ["1000"]   # UNVERIFIED option name; check against the runner docs
+    allowed_users = ["10001"]   # matches image/Dockerfile user
     pull_policy = ["always"]
-    helper_image = "registry.example.internal/ai-hardened/gitlab-runner-helper:latest"  # mirror
+    helper_image = "registry.example.internal/ai-hardened/gitlab-runner-helper:17.0.0"  # mirror; semver tag
     cpu_limit = "2"
     memory_limit = "4Gi"
 
+    # Dedicated nodes (spec section 8). Placeholders: match your node labels/taints.
+    [runners.kubernetes.node_selector]
+      "example.internal/pool" = "ai-runners"
+    [runners.kubernetes.node_tolerations]
+      "example.internal/pool=ai-runners" = "NoSchedule"
+
+    # Namespace enforces PSA restricted, so containers must comply.
     [runners.kubernetes.pod_security_context]
       run_as_non_root = true
-      run_as_user = 1000
-      run_as_group = 1000
+      run_as_user = 10001
+      run_as_group = 10001
+      fs_group = 10001
+      [runners.kubernetes.pod_security_context.seccomp_profile]
+        type = "RuntimeDefault"
+
+    [runners.kubernetes.build_container_security_context]
+      run_as_user = 10001
+      run_as_group = 10001
+      # Try read_only_root_filesystem = true in the pilot (spec 8.2); HOME is the emptyDir below.
+      [runners.kubernetes.build_container_security_context.capabilities]
+        drop = ["ALL"]
+
+    [runners.kubernetes.helper_container_security_context]
+      run_as_user = 10001
+      run_as_group = 10001
+      [runners.kubernetes.helper_container_security_context.capabilities]
+        drop = ["ALL"]
+
+    # image/Dockerfile sets HOME=/home/ai; give it a writable ephemeral volume.
+    [[runners.kubernetes.volumes.empty_dir]]
+      name = "home"
+      mount_path = "/home/ai"

@@ -40,7 +40,11 @@ func main() {
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
 	}
-	v := token.NewVerifier(os.Getenv("GATEWAY_STS_JWKS_URL"), os.Getenv("GATEWAY_STS_ISSUER"), os.Getenv("GATEWAY_AUDIENCE"), jwksClient)
+	jwksURL := os.Getenv("GATEWAY_STS_JWKS_URL")
+	if err := harden.RequireHTTPS(jwksURL); err != nil {
+		log.Fatal("GATEWAY_STS_JWKS_URL: ", err)
+	}
+	v := token.NewVerifier(jwksURL, os.Getenv("GATEWAY_STS_ISSUER"), os.Getenv("GATEWAY_AUDIENCE"), jwksClient)
 	cfg := gateway.Config{UpstreamURL: os.Getenv("GATEWAY_UPSTREAM_URL"), BatchServiceURL: os.Getenv("GATEWAY_BATCH_URL")}
 	if s := os.Getenv("GATEWAY_MAX_BODY_BYTES"); s != "" {
 		cfg.MaxBodyBytes, err = strconv.ParseInt(s, 10, 64)
@@ -58,5 +62,5 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
-	log.Fatal(srv.ListenAndServe())
+	log.Fatal(harden.ServeTLS(srv, os.Getenv("GATEWAY_TLS_CERT"), os.Getenv("GATEWAY_TLS_KEY")))
 }

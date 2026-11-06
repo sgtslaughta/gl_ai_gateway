@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
@@ -26,13 +27,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	lookup, err := sts.NewLDAPLookup(cfg.Directory)
+	pool, err := harden.LoadPool(os.Getenv("STS_CA_FILE"))
+	if err != nil {
+		log.Fatal("STS_CA_FILE: ", err)
+	}
+	lookup, err := sts.NewLDAPLookup(cfg.Directory, pool)
 	if err != nil {
 		log.Fatal(err)
 	}
+	jwksClient := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
+	}
 	verifiers := map[string]*token.Verifier{}
 	for _, i := range cfg.Issuers {
-		verifiers[i.URL] = token.NewVerifier(i.JWKSURL, i.URL, i.Audience, nil)
+		if err := harden.RequireHTTPS(i.JWKSURL); err != nil {
+			log.Fatal("issuer jwks_url: ", err)
+		}
+		verifiers[i.URL] = token.NewVerifier(i.JWKSURL, i.URL, i.Audience, jwksClient)
 	}
 	addr := os.Getenv("STS_ADDR")
 	if addr == "" {
@@ -45,5 +57,5 @@ func main() {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}
-	log.Fatal(srv.ListenAndServe())
+	log.Fatal(harden.ServeTLS(srv, os.Getenv("STS_TLS_CERT"), os.Getenv("STS_TLS_KEY")))
 }

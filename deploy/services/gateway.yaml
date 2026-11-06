@@ -12,7 +12,8 @@ spec:
 ---
 # Secrets (create out of band, never in the repo):
 #   gateway-client-cert: tls.crt, tls.key (mTLS client cert for the provider)
-#   gateway-ca: ca.crt (internal CA for provider and JWKS fetch)
+#   gateway-ca: ca.crt (internal CA for provider and for the STS serving cert)
+#   gateway-tls: tls.crt, tls.key for gateway.ai-services.svc and gateway.example.internal
 # Separate from sts-signing-keys: a gateway bug must not expose STS keys.
 apiVersion: apps/v1
 kind: Deployment
@@ -28,20 +29,23 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: gateway
-          image: registry.example.internal/ai-services/gateway:0.1.0
+          # Pin by digest from the owner's registry before deploy (REPLACE the placeholder).
+          image: registry.example.internal/ai-services/gateway:0.1.0@sha256:REPLACE_WITH_DIGEST
           imagePullPolicy: Always
           env:
             - {name: GOTRACEBACK, value: none}  # no core dumps / goroutine dumps
             - {name: GATEWAY_CA_FILE, value: /etc/gateway/ca/ca.crt}
             - {name: GATEWAY_CLIENT_CERT, value: /etc/gateway/cert/tls.crt}
             - {name: GATEWAY_CLIENT_KEY, value: /etc/gateway/cert/tls.key}
-            - {name: GATEWAY_STS_JWKS_URL, value: "http://sts.ai-services.svc:8080/.well-known/jwks.json"}
+            - {name: GATEWAY_STS_JWKS_URL, value: "https://sts.ai-services.svc:8080/.well-known/jwks.json"}
             - {name: GATEWAY_STS_ISSUER, value: "https://sts.example.internal"}
             - {name: GATEWAY_AUDIENCE, value: "https://gateway.example.internal"}
             - {name: GATEWAY_UPSTREAM_URL, value: "https://llm.example.internal"}
             - {name: GATEWAY_BATCH_URL, value: "https://batch.example.internal"}
             - {name: GATEWAY_MAX_BODY_BYTES, value: "10485760"}
             - {name: GATEWAY_ADDR, value: ":8080"}
+            - {name: GATEWAY_TLS_CERT, value: /etc/gateway/tls/tls.crt}
+            - {name: GATEWAY_TLS_KEY, value: /etc/gateway/tls/tls.key}
           ports: [{containerPort: 8080}]
           resources:
             requests: {cpu: 100m, memory: 128Mi}
@@ -53,6 +57,8 @@ spec:
           volumeMounts:
             - {name: cert, mountPath: /etc/gateway/cert, readOnly: true}
             - {name: ca, mountPath: /etc/gateway/ca, readOnly: true}
+            - {name: tls, mountPath: /etc/gateway/tls, readOnly: true}
       volumes:
         - {name: cert, secret: {secretName: gateway-client-cert, defaultMode: 0400}}
         - {name: ca, secret: {secretName: gateway-ca, defaultMode: 0444}}
+        - {name: tls, secret: {secretName: gateway-tls, defaultMode: 0400}}

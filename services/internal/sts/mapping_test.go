@@ -3,6 +3,7 @@ package sts
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"testing"
 	"time"
@@ -87,14 +88,15 @@ func TestLDAPLookupExactlyOne(t *testing.T) {
 }
 
 func TestLDAPSOnly(t *testing.T) {
-	if _, err := NewLDAPLookup(DirectoryConfig{URL: "ldap://x.example.internal"}); err == nil {
+	if _, err := NewLDAPLookup(DirectoryConfig{URL: "ldap://x.example.internal"}, nil); err == nil {
 		t.Fatal("plain ldap accepted")
 	}
 }
 
 func TestDirTLSConfig(t *testing.T) {
-	c := dirTLSConfig()
-	if c.InsecureSkipVerify || c.MinVersion < tls.VersionTLS12 {
+	pool := x509.NewCertPool()
+	c := dirTLSConfig(pool)
+	if c.InsecureSkipVerify || c.MinVersion < tls.VersionTLS12 || c.RootCAs != pool {
 		t.Fatalf("%+v", c)
 	}
 }

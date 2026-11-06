@@ -3,6 +3,7 @@ package sts
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -22,8 +23,9 @@ type ldapConn interface {
 }
 
 // dirTLSConfig is the TLS config for directory connections: verification on.
-func dirTLSConfig() *tls.Config {
-	return &tls.Config{MinVersion: tls.VersionTLS12}
+// roots is the trusted CA pool; nil means system roots.
+func dirTLSConfig(roots *x509.CertPool) *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 }
 
 const (
@@ -33,14 +35,14 @@ const (
 
 // NewLDAPLookup returns a LookupFunc backed by the configured LDAPS
 // directory. The bind password is read from BindPasswordFile on each call.
-func NewLDAPLookup(d DirectoryConfig) (LookupFunc, error) {
+func NewLDAPLookup(d DirectoryConfig, roots *x509.CertPool) (LookupFunc, error) {
 	if !strings.HasPrefix(d.URL, "ldaps://") {
 		return nil, errors.New("directory url must use ldaps://")
 	}
 	dial := func() (ldapConn, error) {
 		return ldap.DialURL(d.URL,
 			ldap.DialWithDialer(&net.Dialer{Timeout: dialTimeout}),
-			ldap.DialWithTLSConfig(dirTLSConfig()))
+			ldap.DialWithTLSConfig(dirTLSConfig(roots)))
 	}
 	return newLookup(d, dial, func() (string, error) {
 		b, err := os.ReadFile(d.BindPasswordFile)

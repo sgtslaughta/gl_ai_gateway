@@ -1,4 +1,6 @@
 # Build: docker build --build-arg TARGET=sts|gateway -f services/Dockerfile services
+# Defaults are tags for convenience. For release builds pass the approved
+# digests: --build-arg GO_IMAGE=<img>@sha256:... --build-arg RUN_IMAGE=<img>@sha256:...
 ARG GO_IMAGE=golang:1.26
 ARG RUN_IMAGE=gcr.io/distroless/static-debian12:nonroot
 

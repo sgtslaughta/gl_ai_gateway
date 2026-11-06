@@ -13,6 +13,8 @@ spec:
 # Secrets (create out of band, never in the repo):
 #   sts-signing-keys: key files (PEM), e.g. current.pem, next.pem
 #   sts-directory-bind: password file "bind-password"
+#   sts-tls: tls.crt, tls.key for sts.ai-services.svc and sts.example.internal
+#   sts-ca: ca.crt, internal CA trusted for GitLab JWKS and LDAPS
 # ConfigMap sts-config holds config.json (keys per services/internal/sts/config.go).
 apiVersion: v1
 kind: ConfigMap
@@ -41,7 +43,8 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: sts
-          image: registry.example.internal/ai-services/sts:0.1.0
+          # Pin by digest from the owner's registry before deploy (REPLACE the placeholder).
+          image: registry.example.internal/ai-services/sts:0.1.0@sha256:REPLACE_WITH_DIGEST
           imagePullPolicy: Always
           env:
             - {name: GOTRACEBACK, value: none}  # no core dumps / goroutine dumps
@@ -49,8 +52,11 @@ spec:
             - {name: STS_SIGNING_KEYS, value: "/etc/sts/keys/current.pem,/etc/sts/keys/next.pem"}
             - {name: STS_ISSUER, value: "https://sts.example.internal"}
             - {name: STS_ADDR, value: ":8080"}
+            - {name: STS_CA_FILE, value: /etc/sts/ca/ca.crt}
+            - {name: STS_TLS_CERT, value: /etc/sts/tls/tls.crt}
+            - {name: STS_TLS_KEY, value: /etc/sts/tls/tls.key}
           ports: [{containerPort: 8080}]
-          readinessProbe: {httpGet: {path: /.well-known/jwks.json, port: 8080}}
+          readinessProbe: {httpGet: {path: /.well-known/jwks.json, port: 8080, scheme: HTTPS}}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 256Mi}
@@ -62,7 +68,11 @@ spec:
             - {name: config, mountPath: /etc/sts/config, readOnly: true}
             - {name: keys, mountPath: /etc/sts/keys, readOnly: true}
             - {name: bind, mountPath: /etc/sts/bind, readOnly: true}
+            - {name: ca, mountPath: /etc/sts/ca, readOnly: true}
+            - {name: tls, mountPath: /etc/sts/tls, readOnly: true}
       volumes:
         - {name: config, configMap: {name: sts-config}}
         - {name: keys, secret: {secretName: sts-signing-keys, defaultMode: 0400}}
         - {name: bind, secret: {secretName: sts-directory-bind, defaultMode: 0400}}
+        - {name: ca, secret: {secretName: sts-ca, defaultMode: 0444}}
+        - {name: tls, secret: {secretName: sts-tls, defaultMode: 0400}}
