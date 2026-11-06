@@ -30,5 +30,6 @@ ai-review:
     - ai-review --diff-only --format codequality > review.json
   artifacts:
     expire_in: 1 day
+    paths: [review.json]
     reports:
       codequality: review.json

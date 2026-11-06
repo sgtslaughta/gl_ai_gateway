@@ -9,7 +9,7 @@
 # Placeholder values below (*.example.internal) are overridden per deployment.
 .ai-access:
   tags: [ai]
-  image: registry.example.internal/ai-hardened/ai-base:1.0.0
+  image: registry.example.internal/ai-hardened/ai-base:0.1.0
   variables:
     AI_STS_URL: https://sts.example.internal
     AI_GATEWAY_URL: https://gateway.example.internal

@@ -26,7 +26,7 @@ spec:
     spec:
       serviceAccountName: gateway
       automountServiceAccountToken: false
-      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: gateway
           # Pin by digest from the owner's registry before deploy (REPLACE the placeholder).
@@ -59,6 +59,6 @@ spec:
             - {name: ca, mountPath: /etc/gateway/ca, readOnly: true}
             - {name: tls, mountPath: /etc/gateway/tls, readOnly: true}
       volumes:
-        - {name: cert, secret: {secretName: gateway-client-cert, defaultMode: 0400}}
+        - {name: cert, secret: {secretName: gateway-client-cert, defaultMode: 0440}}
         - {name: ca, secret: {secretName: gateway-ca, defaultMode: 0444}}
-        - {name: tls, secret: {secretName: gateway-tls, defaultMode: 0400}}
+        - {name: tls, secret: {secretName: gateway-tls, defaultMode: 0440}}

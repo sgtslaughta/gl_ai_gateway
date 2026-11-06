@@ -59,6 +59,8 @@ Extra checks from the pilot plan:
 | E3 | Forcing `CI_DEBUG_TRACE` off via runner `environment` | | | | |
 | E4 | Real tokens carry `job_project_path` (working assumption 9) | | | | |
 | E5 | `dpkg` present in image, `apt` and `apt-get` absent | | | | |
+| E6 | Ingress keeps no request-body temp files (large prompt sent; no new files in the ingress controller's temp dir) | | | | |
+| E7 | Anthropic SDK calls with `?beta=true` pass through the gateway and audit keeps no query string | | | | |
 
 ## Step 4 measures
 

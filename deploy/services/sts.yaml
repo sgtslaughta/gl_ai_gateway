@@ -40,7 +40,7 @@ spec:
     spec:
       serviceAccountName: sts
       automountServiceAccountToken: false
-      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:
         - name: sts
           # Pin by digest from the owner's registry before deploy (REPLACE the placeholder).
@@ -72,7 +72,7 @@ spec:
             - {name: tls, mountPath: /etc/sts/tls, readOnly: true}
       volumes:
         - {name: config, configMap: {name: sts-config}}
-        - {name: keys, secret: {secretName: sts-signing-keys, defaultMode: 0400}}
-        - {name: bind, secret: {secretName: sts-directory-bind, defaultMode: 0400}}
+        - {name: keys, secret: {secretName: sts-signing-keys, defaultMode: 0440}}
+        - {name: bind, secret: {secretName: sts-directory-bind, defaultMode: 0440}}
         - {name: ca, secret: {secretName: sts-ca, defaultMode: 0444}}
-        - {name: tls, secret: {secretName: sts-tls, defaultMode: 0400}}
+        - {name: tls, secret: {secretName: sts-tls, defaultMode: 0440}}

@@ -21,6 +21,14 @@ class TemplateTests(unittest.TestCase):
         self.assertTrue(j["id_tokens"]["AI_ID_TOKEN"]["aud"])
         self.assertIn(". ai-token", j["before_script"])
 
+    def test_image_tag_matches_version(self):
+        ver = (T.parent / "image" / "VERSION").read_text().strip()
+        self.assertTrue(load("ai-access.yml")[".ai-access"]["image"].endswith(":" + ver))
+        pilot = (T.parent / "tests" / "pilot" / ".gitlab-ci.yml").read_text()
+        tags = re.findall(r"ai-hardened/ai-base:(\S+)", pilot)
+        self.assertTrue(tags)
+        self.assertEqual(set(tags), {ver})
+
     def test_review(self):
         j = load("ai-code-review.yml")["ai-review"]
         self.assertEqual(j["extends"], ".ai-access")
@@ -30,6 +38,7 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_MODEL", j["variables"])
         self.assertEqual(j["artifacts"]["reports"]["codequality"], "review.json")
         self.assertTrue(j["artifacts"]["expire_in"])
+        self.assertEqual(j["artifacts"]["paths"], ["review.json"])
         self.assertIn("ai-review --diff-only --format codequality > review.json", j["script"])
         r = j["rules"]
         self.assertEqual(r[0]["if"], "$CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID")

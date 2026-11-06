@@ -105,7 +105,7 @@ request-root:
   stage: deny
   allow_failure: true
   image:
-    name: registry.example.internal/ai-hardened/ai-base:1.0.0
+    name: registry.example.internal/ai-hardened/ai-base:0.1.0
     kubernetes:
       user: "0"
   before_script: []
