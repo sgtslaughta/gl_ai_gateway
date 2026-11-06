@@ -45,14 +45,24 @@ concurrent = 2          # pilot: low
     [runners.kubernetes.build_container_security_context]
       run_as_user = 10001
       run_as_group = 10001
-      # Docs list no read-only-rootfs option for these contexts, so it is not set.
-      # If the pilot needs it, enforce via admission policy instead.
+      # read_only_root_filesystem is supported (runner docs, Kubernetes troubleshooting).
+      # Left off here: jobs need writable /builds and HOME. Spec 8.2 says to try it in
+      # the pilot; if enabled, mount emptyDir volumes for /builds and HOME as the docs show.
+      # read_only_root_filesystem = true
       [runners.kubernetes.build_container_security_context.capabilities]
+        drop = ["ALL"]
+
+    [runners.kubernetes.init_permissions_container_security_context]
+      run_as_user = 10001
+      run_as_group = 10001
+      read_only_root_filesystem = true
+      [runners.kubernetes.init_permissions_container_security_context.capabilities]
         drop = ["ALL"]
 
     [runners.kubernetes.helper_container_security_context]
       run_as_user = 10001
       run_as_group = 10001
+      read_only_root_filesystem = true
       [runners.kubernetes.helper_container_security_context.capabilities]
         drop = ["ALL"]
 
@@ -60,6 +70,7 @@ concurrent = 2          # pilot: low
     [runners.kubernetes.service_container_security_context]
       run_as_user = 10001
       run_as_group = 10001
+      read_only_root_filesystem = true
       [runners.kubernetes.service_container_security_context.capabilities]
         drop = ["ALL"]
 

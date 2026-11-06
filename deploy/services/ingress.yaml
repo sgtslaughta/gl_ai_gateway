@@ -2,8 +2,11 @@
 # verifying each backend certificate against the internal CA.
 # Secrets (out of band): ai-services-tls (front cert, both hosts) and
 # ai-services/ingress-backend-ca (key ca.crt) in the same namespace.
-# proxy-ssl-secret format is <namespace>/<name>; ingress-nginx requires ca.crt
-# (and may require tls.crt/tls.key in that secret; add a client pair if so).
+# proxy-ssl-secret format is <namespace>/<name>. Per the ingress-nginx docs, tls.crt and
+# tls.key are the client cert/key used to authenticate TO the backend (optional for us:
+# the services do not require client certs), and ca.crt verifies the backend.
+# CONFIRMED: ca.crt is the verification CA. UNVERIFIED: that a ca.crt-only secret is
+# accepted (docs say the secret "should also contain" ca.crt); test in the pilot.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

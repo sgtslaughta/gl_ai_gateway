@@ -10,7 +10,7 @@ For release pass approved digests: `--build-arg GO_IMAGE=...@sha256:... --build-
 ## Secrets (create out of band, never in the repo)
 - sts-signing-keys (current.pem, next.pem), sts-directory-bind (bind-password), sts-tls, sts-ca
 - gateway-client-cert (tls.crt, tls.key), gateway-ca, gateway-tls
-- ai-services-tls (ingress front cert), ingress-backend-ca (ca.crt; the CA that signed sts-tls and gateway-tls, used by nginx proxy-ssl-verify; may also need a client tls.crt/tls.key pair)
+- ai-services-tls (ingress front cert), ingress-backend-ca (ca.crt; the CA that signed sts-tls and gateway-tls, used by nginx proxy-ssl-verify; per ingress-nginx docs tls.crt/tls.key are only the optional client pair for authenticating to the backend. Whether a ca.crt-only secret is accepted is unverified, test in the pilot)
 Serving certs need SANs for `<svc>.ai-services.svc` and the `*.example.internal` host. `gateway-ca` must trust the STS serving cert; `sts-ca` must trust GitLab and the LDAP server.
 
 ## Required env vars
