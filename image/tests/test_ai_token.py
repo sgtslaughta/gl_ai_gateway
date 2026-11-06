@@ -27,6 +27,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
             code, out = 403, b'{"error":"runner_not_allowed"}'
         elif Stub.mode == "500":
             code, out = 500, b"internal ISSUED-LEAK"
+        elif Stub.mode == "html502":
+            code, out = 502, b"<html><body>Bad Gateway</body></html>"
         elif Stub.mode == "noaccess":
             code, out = 200, b'{"expires_in":1}'
         elif Stub.mode == "nonjson":
@@ -126,6 +128,25 @@ class TestAIToken(unittest.TestCase):
             self.assertIn("key=unset", r.stdout, mode)
             self.assertNotIn("LEAK", r.stdout + r.stderr, mode)
             self.assertNotIn(ID_TOKEN, r.stdout + r.stderr, mode)
+
+    def test_html_502_under_errexit_pipefail(self):
+        # GitLab runner scripts run with set -eo pipefail: a jq failure on an
+        # HTML error page must not exit silently.
+        Stub.mode = "html502"
+        r = self.run_script(shell="bash",
+                            cmd="set -eo pipefail; trap 'echo id=${AI_ID_TOKEN:-unset}' EXIT; . ./ai-token; echo not-reached")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("not-reached", r.stdout)
+        self.assertIn("token exchange denied (HTTP 502)", r.stderr)
+        self.assertIn("id=unset", r.stdout)
+        self.assertNotIn(ID_TOKEN, r.stdout + r.stderr)
+
+    def test_errexit_with_trace_restores_trace(self):
+        Stub.mode = "html502"
+        r = self.run_script(shell="bash",
+                            cmd="set -eox pipefail; . ./ai-token || true; case $- in *x*) echo traced;; esac")
+        self.assertIn("traced", r.stdout)
+        self.assertNotIn(ID_TOKEN, r.stdout + r.stderr)
 
     def test_id_token_unset_on_unreachable(self):
         r = self.run_script(sts="http://127.0.0.1:1", cmd=". ./ai-token; echo id=${AI_ID_TOKEN:-unset}")

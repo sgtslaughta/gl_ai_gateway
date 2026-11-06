@@ -35,12 +35,14 @@ _ai_t_main() {
     _ai_body=${_ai_out%
 *}
     if [ "$_ai_code" != 200 ]; then
+        # "|| _ai_reason=" keeps set -eo pipefail callers from exiting silently
+        # when the body is not JSON (for example an HTML 502 page).
         _ai_reason=$(printf '%s' "$_ai_body" | jq -r '.error // empty' 2>/dev/null |
-            tr -cd 'A-Za-z0-9_.-' | cut -c1-64)
+            tr -cd 'A-Za-z0-9_.-' | cut -c1-64) || _ai_reason=
         _ai_t_fail "token exchange denied (HTTP $_ai_code): ${_ai_reason:-unknown_reason}"
         return 1
     fi
-    _ai_tok=$(printf '%s' "$_ai_body" | jq -r '.access_token // empty' 2>/dev/null)
+    _ai_tok=$(printf '%s' "$_ai_body" | jq -r '.access_token // empty' 2>/dev/null) || _ai_tok=
     if [ -z "$_ai_tok" ]; then
         _ai_t_fail "STS response had no access_token"
         return 1
@@ -52,8 +54,9 @@ _ai_t_main() {
     export OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY
 }
 
-_ai_t_main
-_ai_t_rc=$?
+# "||" so a caller's set -e cannot skip the cleanup below.
+_ai_t_rc=0
+_ai_t_main || _ai_t_rc=$?
 unset AI_ID_TOKEN
 unset -f _ai_t_main _ai_t_fail 2>/dev/null || true
 unset _ai_v _ai_val _ai_gw _ai_out _ai_code _ai_body _ai_reason _ai_tok
