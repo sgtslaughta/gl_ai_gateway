@@ -1,0 +1,39 @@
+# Default deny for job pods; allow only GitLab, registry, STS, gateway, DNS.
+# CIDRs are placeholders for *.example.internal addresses; replace per site.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: ai-runners
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-job-egress
+  namespace: ai-runners
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # gitlab.example.internal
+    - to: [{ipBlock: {cidr: 192.0.2.10/32}}]
+      ports: [{protocol: TCP, port: 443}]
+    # registry.example.internal
+    - to: [{ipBlock: {cidr: 192.0.2.11/32}}]
+      ports: [{protocol: TCP, port: 443}]
+    # sts.example.internal and gateway.example.internal (ingress address)
+    - to: [{ipBlock: {cidr: 192.0.2.12/32}}]
+      ports: [{protocol: TCP, port: 443}]

@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: sts, namespace: ai-services}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sts, namespace: ai-services}
+spec:
+  selector: {app: sts}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+# Secrets (create out of band, never in the repo):
+#   sts-signing-keys: key files (PEM), e.g. current.pem, next.pem
+#   sts-directory-bind: password file "bind-password"
+# ConfigMap sts-config holds config.json (keys per services/internal/sts/config.go).
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: sts-config, namespace: ai-services}
+data:
+  config.json: |
+    {
+      "issuers": [{"url": "https://gitlab.example.internal", "audience": "https://sts.example.internal", "jwks_url": "https://gitlab.example.internal/oauth/discovery/keys"}],
+      "runner_ids": [],
+      "gateway_audience": "https://gateway.example.internal",
+      "token_ttl": "30m",
+      "directory": {"url": "ldaps://ldap.example.internal", "base_dn": "ou=people,dc=example,dc=internal", "bind_dn": "cn=sts,ou=svc,dc=example,dc=internal", "bind_password_file": "/etc/sts/bind/bind-password", "email_attribute": "mail"}
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sts, namespace: ai-services}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sts}}
+  template:
+    metadata: {labels: {app: sts}}
+    spec:
+      serviceAccountName: sts
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: sts
+          image: registry.example.internal/ai-services/sts:0.1.0
+          imagePullPolicy: Always
+          env:
+            - {name: GOTRACEBACK, value: none}  # no core dumps / goroutine dumps
+            - {name: STS_CONFIG, value: /etc/sts/config/config.json}
+            - {name: STS_SIGNING_KEYS, value: "/etc/sts/keys/current.pem,/etc/sts/keys/next.pem"}
+            - {name: STS_ISSUER, value: "https://sts.example.internal"}
+            - {name: STS_ADDR, value: ":8080"}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /.well-known/jwks.json, port: 8080}}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/sts/config, readOnly: true}
+            - {name: keys, mountPath: /etc/sts/keys, readOnly: true}
+            - {name: bind, mountPath: /etc/sts/bind, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: sts-config}}
+        - {name: keys, secret: {secretName: sts-signing-keys, defaultMode: 0400}}
+        - {name: bind, secret: {secretName: sts-directory-bind, defaultMode: 0400}}

@@ -1,0 +1,53 @@
+# CIDRs are placeholders for *.example.internal addresses; replace per site.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: ai-services}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: sts, namespace: ai-services}
+spec:
+  podSelector: {matchLabels: {app: sts}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
+        # gateway fetches the STS JWKS in-cluster
+        - podSelector: {matchLabels: {app: gateway}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    # gitlab.example.internal (JWKS)
+    - to: [{ipBlock: {cidr: 192.0.2.10/32}}]
+      ports: [{protocol: TCP, port: 443}]
+    # ldap.example.internal (LDAPS)
+    - to: [{ipBlock: {cidr: 192.0.2.20/32}}]
+      ports: [{protocol: TCP, port: 636}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: gateway, namespace: ai-services}
+spec:
+  podSelector: {matchLabels: {app: gateway}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    # STS JWKS
+    - to: [{podSelector: {matchLabels: {app: sts}}}]
+      ports: [{protocol: TCP, port: 8080}]
+    # provider LLM gateway and batch service (llm/batch.example.internal)
+    - to: [{ipBlock: {cidr: 192.0.2.30/32}}]
+      ports: [{protocol: TCP, port: 443}]

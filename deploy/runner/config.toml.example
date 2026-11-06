@@ -1,0 +1,30 @@
+# Example only. Real values and the runner token come from the owner's config.
+# Never commit the token. Review changes to this file as security policy changes.
+concurrent = 2          # pilot: low
+
+[[runners]]
+  name = "ai-pilot"
+  url = "https://gitlab.example.internal"
+  token = "REPLACE_WITH_RUNNER_AUTH_TOKEN"   # from secret store, not the repo
+  executor = "kubernetes"
+  limit = 2             # pilot: low
+  # No shared cache: [runners.cache] intentionally omitted.
+
+  [runners.kubernetes]
+    namespace = "ai-runners"
+    privileged = false
+    allow_privilege_escalation = false
+    automount_service_account_token = false
+    allowed_images = ["registry.example.internal/ai-hardened/*"]
+    allowed_services = ["registry.example.internal/ai-hardened/*"]
+    allowed_pull_policies = ["always"]
+    allowed_users = ["1000"]   # UNVERIFIED option name; check against the runner docs
+    pull_policy = ["always"]
+    helper_image = "registry.example.internal/ai-hardened/gitlab-runner-helper:latest"  # mirror
+    cpu_limit = "2"
+    memory_limit = "4Gi"
+
+    [runners.kubernetes.pod_security_context]
+      run_as_non_root = true
+      run_as_user = 1000
+      run_as_group = 1000
