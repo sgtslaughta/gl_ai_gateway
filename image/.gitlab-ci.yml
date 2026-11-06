@@ -7,8 +7,18 @@
 # Gate: candidates are pushed to STAGING_REPO, which is OUTSIDE ai-hardened/
 # (allowed_images is ai-hardened/*). Only the release job writes to ai-hardened/,
 # and it promotes the exact scanned digest, never a mutable tag.
-# Required masked CI variables: REGISTRY_USER, REGISTRY_PASSWORD (push rights to
-# the staging repo and, for the release job only, to ai-hardened/).
+#
+# Credentials (masked CI variables, least privilege, one pair per job class):
+#   build        STAGING_REGISTRY_USER / STAGING_REGISTRY_PASSWORD  push to the staging repo only
+#   sbom, scan   PULL_REGISTRY_USER / PULL_REGISTRY_PASSWORD        pull-only
+#   release      RELEASE_REGISTRY_USER / RELEASE_REGISTRY_PASSWORD  push to ai-hardened/ only
+# Scope the RELEASE_* variables to the 'release' environment and restrict that
+# environment to a protected environment, so no other job can read them.
+#
+# Gate integrity: set the project's pipeline-variable override role ("Minimum
+# role to use pipeline variables") to owner or no one, and keep SCAN_CMD, SBOM_CMD
+# and SIGN_CMD in protected project config. The scan job records the digest it
+# scanned; release refuses to promote anything else.
 
 variables:
   REGISTRY: registry.example.internal
@@ -45,8 +55,6 @@ default:
   services:
     - name: $DOCKER_DIND_IMAGE
       alias: docker
-  before_script:
-    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
 
 unit-tests:
   stage: test
@@ -59,13 +67,15 @@ unit-tests:
 build:
   extends: .docker
   stage: build
+  before_script:
+    - printf '%s' "$STAGING_REGISTRY_PASSWORD" | docker login -u "$STAGING_REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
     - CANDIDATE=$STAGING_REPO:candidate-$CI_COMMIT_SHORT_SHA
     - docker build --build-arg BASE_IMAGE="$BASE_IMAGE" --build-arg APT_MIRROR="$APT_MIRROR" -t "$CANDIDATE" image
     - docker run --rm -i "$CANDIDATE" sh -s < image/tests/smoke.sh   # no bind mount (remote daemon)
     - docker push "$CANDIDATE"
     - DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$CANDIDATE")
-    - echo "CANDIDATE_REF=$DIGEST" > build.env
+    - echo "BUILD_STAGED_REF=$DIGEST" > build.env
   artifacts:
     reports:
       dotenv: build.env
@@ -74,7 +84,11 @@ sbom:
   extends: .docker
   stage: verify
   needs: [build]
+  before_script:
+    - printf '%s' "$PULL_REGISTRY_PASSWORD" | docker login -u "$PULL_REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
+    - CANDIDATE_REF=$BUILD_STAGED_REF
+    - export CANDIDATE_REF
     - '[ -n "$SBOM_CMD" ] || { echo "SBOM_CMD is not set"; exit 1; }'
     - sh -c "$SBOM_CMD"
   artifacts:
@@ -85,17 +99,34 @@ scan:
   extends: .docker
   stage: verify
   needs: [build]
+  before_script:
+    - printf '%s' "$PULL_REGISTRY_PASSWORD" | docker login -u "$PULL_REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
+    - CANDIDATE_REF=$BUILD_STAGED_REF
+    - export CANDIDATE_REF
     - '[ -n "$SCAN_CMD" ] || { echo "SCAN_CMD is not set"; exit 1; }'
     - sh -c "$SCAN_CMD"
+    - printf '%s\n' "$CANDIDATE_REF" > scan-report.txt   # only reached if the scan passed
+  artifacts:
+    paths: [scan-report.txt]
+    expire_in: 7 days
 
 release:
   extends: .docker
   stage: release
-  needs: [build, sbom, scan]       # runs only if scan passed
+  needs: [build, sbom, {job: scan, artifacts: true}]   # runs only if scan passed
+  environment: release             # restrict RELEASE_* credentials to this protected environment
   rules:
     - if: $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  before_script:
+    - printf '%s' "$RELEASE_REGISTRY_PASSWORD" | docker login -u "$RELEASE_REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
+    # Promote only the digest that is in STAGING_REPO and that the scan job recorded.
+    - PREFIX=$STAGING_REPO@sha256:
+    - case "$BUILD_STAGED_REF" in "$PREFIX"*) ;; *) echo "staged ref is not in the staging repo"; exit 1;; esac
+    - printf '%s' "${BUILD_STAGED_REF#"$PREFIX"}" | grep -Eq '^[0-9a-f]{64}$' || { echo "staged ref is not a sha256 digest"; exit 1; }
+    - '[ "$(cat scan-report.txt)" = "$BUILD_STAGED_REF" ] || { echo "scan report does not match the staged digest"; exit 1; }'
+    - CANDIDATE_REF=$BUILD_STAGED_REF
     - case "$RUNNER_HELPER_SRC $RUNNER_HELPER_VERSION" in *CHANGE_ME*) echo "set RUNNER_HELPER_SRC and RUNNER_HELPER_VERSION (still CHANGE_ME)"; exit 1;; esac
     - VERSION=$(cat image/VERSION)
     - IMAGE_REF=$RELEASE_REPO:$VERSION
