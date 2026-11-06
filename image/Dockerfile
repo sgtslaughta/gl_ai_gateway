@@ -28,6 +28,7 @@ RUN update-ca-certificates \
  && mkdir -p /home/ai && chown 10001:10001 /home/ai
 
 COPY ai-token /usr/local/bin/ai-token
+COPY --chmod=0755 ai_review.py /usr/local/bin/ai-review
 USER 10001:10001
 ENV HOME=/home/ai
 WORKDIR /home/ai

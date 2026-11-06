@@ -5,7 +5,7 @@ bad() { echo "FAIL: $*" >&2; fail=1; }
 
 [ "$(id -u)" != 0 ] || bad "running as root"
 
-for t in bash curl jq git python3 ai-token; do
+for t in bash curl jq git python3 ai-token ai-review; do
     command -v "$t" >/dev/null 2>&1 || bad "missing tool: $t"
 done
 
