@@ -27,13 +27,12 @@ LIFETIME_TOLERANCE_SECONDS = 600
 TIMEOUT_SECONDS = 5
 
 REQUIRED_CLAIMS = ("iss", "aud", "exp", "iat", "user_login", "runner_id", "pipeline_source",
-                   "ref_protected", "project_path", "sha", "pipeline_id", "job_id")
-OPTIONAL_CLAIMS = ("ref", "user_email", "user_identities", "ci_config_ref_uri",
+                   "ref_protected", "project_path", "sha", "pipeline_id", "job_id", "user_id")
+OPTIONAL_CLAIMS = ("ref", "ci_config_ref_uri",
                    "runner_environment", "user_access_level")
 # ponytail: allowlist, so a new GitLab claim stays masked by default.
 SAFE_TO_PRINT = ("iss", "aud", "iat", "exp", "nbf", "runner_id", "runner_environment",
                  "pipeline_source", "ref_protected", "ref_type")
-DN_PATTERN = re.compile(r"(^|,)\s*(cn|uid|ou|dc|o)=", re.IGNORECASE)
 
 
 class ProbeError(Exception):
@@ -72,14 +71,9 @@ def check_version(text):
 
 
 def _check_mapping(claims):
-    identities = claims.get("user_identities") or []
-    with_dn = [i.get("provider", "?") for i in identities
-               if isinstance(i, dict) and DN_PATTERN.search(str(i.get("extern_uid", "")))]
-    if with_dn:
-        return Result(PASS, "identity-mapping", f"DN-like value in providers: {with_dn}")
     if claims.get("user_email"):
-        return Result(WARN, "identity-mapping", "no DN in token; needs directory lookup by email")
-    return Result(FAIL, "identity-mapping", "no DN and no user_email to look up")
+        return Result(PASS, "identity-mapping", "user_email present for directory lookup")
+    return Result(FAIL, "identity-mapping", "no user_email to look up")
 
 
 def _check_lifetime(claims, job_timeout):

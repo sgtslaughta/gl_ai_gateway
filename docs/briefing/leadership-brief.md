@@ -1,6 +1,6 @@
 # Leadership brief: AI in GitLab CI without personal certificates
 
-**Status, 2026-11-06:** Design approved. Validation probe written, not yet run on our GitLab. No services built.
+**Status, 2026-11-06:** Design approved. Baseline probe run: the token has the lookup key STS needs. DN comparison, trigger and network tests are pending. No services built.
 **Ask:** Approve a small pilot on non-sensitive test projects, and sponsor two decisions outside the team (below).
 
 ## Bottom line
@@ -33,7 +33,7 @@ We propose a token service and gateway that let a job use AI under the identity 
 ### Risks we would be accepting
 
 1. **Identity follows who triggered the job, not who wrote the code.** A malicious commit can act as whoever runs it, for up to 30 minutes.
-2. **GitLab admins are in the trust boundary,** and are outside our team.
+2. **GitLab admins are in the trust boundary,** and are outside our team. One who changed a user's email could redirect that user's attribution. Audit logs would show the same user ID under the new email.
 3. **The gateway certificate and token signing key are powerful.** Either could claim to be any user, so both need strong protection.
 4. **No content screening.** Prompt injection is limited only by restricting what jobs can do.
 5. **Audit shows who, when and where, but not what was sent.** That is deliberate, given the data involved.
@@ -63,6 +63,6 @@ We propose a token service and gateway that let a job use AI under the identity 
 
 ## Not yet known
 
-- **Whether the design works on our GitLab.** The probe decides this, and the build waits on it.
+- **Whether the design fully works on our GitLab.** The remaining probe tests decide this, and the build waits on them.
 - **Cost, staffing and schedule.** Not estimated yet. Pilot load data will inform sizing.
 - **Accreditor position.** If refused, high-risk projects would need signed user delegation, which adds certificate handling for those users.

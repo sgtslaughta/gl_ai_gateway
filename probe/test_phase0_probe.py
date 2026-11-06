@@ -32,6 +32,7 @@ def good_claims(**overrides):
         "iat": 1000,
         "exp": 1000 + 3900,
         "user_login": "alice",
+        "user_id": "42",
         "user_email": "alice@example.internal",
         "user_identities": [
             {"provider": "ldapmain", "extern_uid": "cn=Alice Secret,ou=people,dc=example"}
@@ -103,19 +104,19 @@ class ClaimTests(unittest.TestCase):
         del claims["ci_config_ref_uri"]
         self.assertEqual(levels(self.check(claims))["claim:ci_config_ref_uri"], probe.WARN)
 
-    def test_dn_in_identities_passes_without_exposing_value(self):
-        results = self.check(good_claims())
+    def test_email_mapping_passes_without_exposing_value(self):
+        results = self.check(good_claims(user_identities=[]))
         mapping = next(r for r in results if r.name == "identity-mapping")
         self.assertEqual(mapping.level, probe.PASS)
-        self.assertNotIn("Alice Secret", mapping.detail)
-        self.assertIn("ldapmain", mapping.detail)
+        self.assertNotIn("alice@", mapping.detail)
 
-    def test_email_only_mapping_warns(self):
-        results = self.check(good_claims(user_identities=[]))
-        self.assertEqual(levels(results)["identity-mapping"], probe.WARN)
+    def test_missing_user_id_fails(self):
+        claims = good_claims()
+        del claims["user_id"]
+        self.assertEqual(levels(self.check(claims))["claim:user_id"], probe.FAIL)
 
-    def test_no_mapping_key_fails(self):
-        claims = good_claims(user_identities=[])
+    def test_dn_in_token_does_not_replace_email(self):
+        claims = good_claims()
         del claims["user_email"]
         self.assertEqual(levels(self.check(claims))["identity-mapping"], probe.FAIL)
 

@@ -6,7 +6,7 @@
 
 **Architecture:** A job swaps its GitLab ID token at STS for a short-lived token. A pass-through gateway verifies that token and calls the provider with its own mTLS certificate plus `X-Proxied-Entity`. Hard controls live in STS, the gateway, and your runner and network configuration, while CI templates only provide convenience.
 
-**Tech Stack:** Go standard library plus `github.com/golang-jwt/jwt/v5` for STS and gateway (planner's choice, for its streaming proxy and single static binary; confirm the Go toolchain and module mirror exist on the network before Task 2). Python 3 standard library and POSIX shell for image tools. GitLab Runner Kubernetes executor, Kubernetes NetworkPolicy.
+**Tech Stack:** Go standard library plus `github.com/golang-jwt/jwt/v5` for STS and gateway and `github.com/go-ldap/ldap/v3` for STS's directory lookup (planner's choice, for its streaming proxy and single static binary; spec 13.1 assumes the toolchain and module mirror exist). Python 3 standard library and POSIX shell for image tools. GitLab Runner Kubernetes executor, Kubernetes NetworkPolicy.
 
 **Spec:** `docs/superpowers/specs/2026-11-05-gitlab-runner-ai-access-design.md`. Read sections 3, 5, 6, 8 and 9 before starting.
 
@@ -39,7 +39,7 @@
 
 ### Task 1: Run the probe and record results
 
-The probe already exists and its unit tests pass: `probe/phase0_probe.py`, `probe/phase0-probe.gitlab-ci.yml`, `probe/README.md`, `probe/results.md`. This task needs a person with access to the network.
+**Owner's decision, 2026-11-06:** Tasks 2 to 9 and the Task 10 docs proceed now on spec section 13.1's working assumptions. Steps 2 to 5 here, and Task 10's pilot runs, stay open and must finish before any deployment. The probe already exists and its unit tests pass: `probe/phase0_probe.py`, `probe/phase0-probe.gitlab-ci.yml`, `probe/README.md`, `probe/results.md`. This task needs a person with access to the network.
 
 **Files:**
 - Modify: `probe/results.md`
@@ -60,7 +60,7 @@ Expected: job log shows `identity-mapping` as `PASS` or `WARN`.
 
 - [ ] **Step 5: Apply the gate**
 
-If `identity-mapping` is `FAIL`, stop and agree a mapping source with the owner. Otherwise record the mapping method. Task 3 depends on it.
+If `identity-mapping` is `FAIL`, or the directory DN doesn't match the certificate DN, stop and agree a fix with the owner. Otherwise record the directory attribute and any DN transform. Task 3 depends on them.
 
 - [ ] **Step 6: Commit**
 
@@ -124,8 +124,8 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 **Interfaces:**
 - Consumes: `token.Verifier`, `token.Signer`, `token.Claims`.
 - Produces:
-  - `type GitLabClaims struct` with the ID token fields, including `UserIdentities []Identity`, `RefProtected string`, `PipelineSource string`, and `RunnerID int64`.
-  - `type IssuerConfig struct { URL, Audience, JWKSURL string }` and `type Config struct { Issuers []IssuerConfig; RunnerIDs []int64; GatewayAudience string; TokenTTL time.Duration }`, loaded from JSON at `STS_CONFIG`. Only GitLab is listed in v1.
+  - `type GitLabClaims struct` with the ID token fields, including `UserEmail string`, `UserID string`, `RefProtected string`, `PipelineSource string`, and `RunnerID int64`.
+  - `type IssuerConfig struct { URL, Audience, JWKSURL string }` and `type Config struct { Issuers []IssuerConfig; RunnerIDs []int64; GatewayAudience string; TokenTTL time.Duration; Directory DirectoryConfig }` with `type DirectoryConfig struct { URL, BaseDN, BindDN, BindPasswordFile, EmailAttribute string }`, loaded from JSON at `STS_CONFIG`. Only GitLab is listed in v1.
   - `func CheckPolicy(c GitLabClaims, cfg Config) error`.
   - `func MapDN(ctx context.Context, c GitLabClaims, lookup LookupFunc) (string, error)` with `type LookupFunc func(ctx context.Context, email string) (string, error)`.
   - HTTP: `POST /token`, RFC 8693 form fields `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token`, `subject_token_type=urn:ietf:params:oauth:token-type:jwt`. Returns JSON `access_token`, `issued_token_type`, `token_type: Bearer`, `expires_in`.
@@ -137,13 +137,13 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 
 - [ ] **Step 2: Write failing mapping tests**
 
-- `TestDNFromIdentities`: the identity with a DN-like `extern_uid` is returned.
-- `TestLookupByEmail`: with no DN, calls `lookup` with `user_email`.
+- `TestLookupByEmail`: calls `lookup` with `user_email` and returns its DN.
+- `TestMissingEmailDenied`: an empty `user_email` returns an error without calling `lookup`.
 - `TestNoMatchDenied`: lookup miss returns an error.
-- `TestNilLookupDenied`: no DN and nil lookup returns an error.
-- `TestBotDenied`: a bot user with no DN or directory match returns an error.
+- `TestNilLookupDenied`: nil lookup returns an error.
+- `TestBotDenied`: a bot user with no directory match returns an error.
 - `TestControlCharsDenied`: a DN containing `\r`, `\n` or `\x00` returns an error.
-- `TestAmbiguousDenied`: multiple different DN values return an error.
+- `TestAmbiguousDenied`: a lookup error for several matching entries returns an error.
 
 - [ ] **Step 3: Write failing handler tests**
 
@@ -153,7 +153,7 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 - Wrong `grant_type` or `subject_token_type` returns 400.
 - Invalid token returns 401. Policy or mapping denial returns 403 with a short reason code such as `runner_not_allowed`, `schedule_ref_not_protected` or `identity_not_mapped`.
 - Log output and responses never contain the subject token.
-- Each decision writes one JSON audit line: user, DN, project, ref, SHA, pipeline, job, runner, status, reason.
+- Each decision writes one JSON audit line: user, `user_id`, DN, project, ref, SHA, pipeline, job, runner, status, reason.
 
 - [ ] **Step 4: Run tests to verify they fail**
 
@@ -162,7 +162,7 @@ Expected: FAIL, undefined symbols.
 
 - [ ] **Step 5: Implement**
 
-Implement `lookup` according to `probe/results.md`. If the token carries the DN, pass `nil`. If email lookup is needed, add an LDAP `LookupFunc` using an approved LDAP module, and test it against a stub interface only here. `main.go` verifies against the GitLab issuer, and sets a body limit of 64 KiB on `/token`.
+Add an LDAP `LookupFunc` using `go-ldap` and `Config.Directory`, with no DN transform (spec 13.1). It escapes the email in the filter and returns an error unless exactly one entry matches. Test it against a stub interface only here. `main.go` verifies against the GitLab issuer, and sets a body limit of 64 KiB on `/token`.
 
 - [ ] **Step 6: Run tests to verify they pass**
 

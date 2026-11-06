@@ -1,7 +1,7 @@
 # Peer technical brief: GitLab runner AI access
 
 **For:** engineers reviewing the design.
-**Status, 2026-11-06:** Design approved, Phase 0 probe written, not yet run on our GitLab. Nothing else built.
+**Status, 2026-11-06:** Design approved. Baseline probe run: the token has the lookup key STS needs. DN comparison, trigger and network tests are pending. Nothing else built.
 **Sources:** [design](../superpowers/specs/2026-11-05-gitlab-runner-ai-access-design.md), [plan](../superpowers/plans/2026-11-05-gitlab-runner-ai-access.md), [probe](../../probe/README.md).
 
 ## Design in brief
@@ -35,7 +35,7 @@ On an allowed image  → NetworkPolicy limits connections
 | **Allowed routes** | `POST /v1/chat/completions`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/embeddings`. `GET /v1/models` |
 | **Token headers accepted** | `Authorization: Bearer` or `x-api-key` |
 | **Removed from clients** | `Authorization`, `x-api-key`, `api-key`, `x-litellm-*`, `X-Proxied-Entity`, CI metadata headers |
-| **Mapping** | DN from `user_identities` if present, else directory lookup by `user_email`. No match means deny |
+| **Mapping** | Directory lookup by `user_email`, using the directory's DN. Anything but exactly one match means deny. `user_id` goes in the audit log |
 | **v1 output** | Code quality artifact. No write credential in the job |
 
 **Why a code quality artifact:** `CI_JOB_TOKEN` can't post MR notes, protected variables don't reach normal MR pipelines, and the MR author can read unprotected ones. So v1 uses a native report that needs no write credential.
@@ -54,6 +54,7 @@ On an allowed image  → NetworkPolicy limits connections
 - Retrying someone else's commit runs their code under your identity. Logs record the SHA so an audit can separate the two.
 - The gateway certificate and STS signing key can each claim to be any user.
 - GitLab admins are in the trust boundary. Admin-side runner changes aren't monitored in v1.
+- Mapping depends on GitLab's email lock. An admin who changes a user's email redirects their attribution. `user_id` in the audit log makes that detectable.
 - No content inspection. Injection defense relies on limiting what a job can do.
 - Audit is metadata only. Nobody can later show what was sent, by design.
 - Hardening the image is not a boundary, since a job can still run what is in its checkout.
@@ -62,7 +63,8 @@ On an allowed image  → NetworkPolicy limits connections
 
 | Assumption | How it gets tested |
 |---|---|
-| Token has a DN or directory lookup key (**the build gate**) | Phase 0 probe |
+| Token has `user_email` and `user_id` | **Confirmed** by the baseline probe |
+| Directory returns one entry per email, and its DN matches the certificate (**the build gate**) | Phase 0 directory test |
 | `user_login` matches expectations for push, MR, retry, manual, schedule, trigger token and bot | Phase 0 trigger test |
 | `exp` tracks job timeout | Phase 0 probe |
 | Runners reach the enclave; STS reaches JWKS and the directory | Phase 0 network test |

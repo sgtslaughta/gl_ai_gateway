@@ -1,7 +1,7 @@
 # GitLab Runner AI Access: Design
 
 **Date:** 2026-11-05
-**Status:** Approved by owner, 2026-11-06
+**Status:** Approved by owner, 2026-11-06. Build proceeds on the working assumptions in section 13.1, also by owner's decision.
 
 Decisions are the owner's unless marked **(designer's call)**. Those are open to override.
 
@@ -47,6 +47,7 @@ Known limits, all to be covered by sign-off (section 12):
 - **Poisoned code runs as the victim.** A malicious commit or dependency can use the identity of whoever triggers it, for up to the token lifetime.
 - **GitLab admins are in the trust boundary and are outside the owner's team.** They can likely act as other users and change GitLab-side runner settings.
 - **The gateway certificate can claim to be any user.** Same for the STS signing key.
+- **Identity mapping depends on GitLab's email lock.** Users can't change their email, but a GitLab admin can, which would redirect that user's attribution. The audit log records the unchanging `user_id`, so such a change can be detected afterward.
 - **Further trust depends on the access option.** Group Owners under option 2, central project Maintainers under option 3 (section 8.1).
 - **No content controls exist.** Neither this gateway nor the LLM API gateway screens prompts. Injection defense relies entirely on limiting what a job can do.
 - **Audit shows who, when and where, not what.** After an incident, nobody can show what was sent, by design.
@@ -88,7 +89,7 @@ GitLab trust is one relationship: an allowlisted issuer URL, its signing keys (J
 4. If `pipeline_source` is `schedule`, then `ref_protected` must be true.
 5. User maps to a real directory entry.
 
-**Identity mapping:** users sign in to GitLab through the same directory as their certificates. Use the DN from `user_identities` if the Phase 0 test shows it there; otherwise look up `user_email` in the directory. No match means deny, with no fallback identity. Bot users (project and group access tokens) therefore fail to map and are denied.
+**Identity mapping:** users sign in to GitLab through the same directory as their certificates. STS looks up the signed `user_email` in the directory and uses the DN the directory returns. Exactly one entry must match. No match or several means deny, with no fallback identity. STS doesn't use `user_identities`, because that claim needs an opt-in preference from each user (owner's decision, 2026-11-06). Bot users (project and group access tokens) therefore fail to map and are denied.
 
 **Issued token:**
 - `aud`: the gateway only.
@@ -142,7 +143,7 @@ LiteLLM also offers optional secret detection and PII guardrails. They aren't us
 
 ## 7. Audit
 
-STS and gateway emit metadata to the SIEM: user, DN, project, ref, SHA, pipeline, job, runner, path, status, bytes, duration, request ID. No prompts or responses. Retention follows existing policy.
+STS and gateway emit metadata to the SIEM: user, DN, project, ref, SHA, pipeline, job, runner, path, status, bytes, duration, request ID. No prompts or responses. STS also records the token's `user_id`. Retention follows existing policy.
 
 **Designer's call:** the owner approved logging model and token usage, but a pass-through gateway cannot read them without parsing bodies. Join them from provider records using `x-litellm-call-id` instead, along with the CI context set by the gateway. If the provider cannot supply those records, fall back to request count and bytes.
 
@@ -332,14 +333,14 @@ Add further templates only when the pilot shows demand. Do not create one templa
 
 ## 12. Rollout and gates
 
-**Phase 0: Validate.** Resolve every item in section 13, including the approved base image and internal package mirror. The provider's trust in the gateway is confirmed by the owner. **Gate:** no services are built until identity mapping is confirmed.
+**Phase 0: Validate.** Resolve every item in section 13, including the approved base image and internal package mirror. The provider's trust in the gateway is confirmed by the owner. **Gate:** nothing is deployed until identity mapping is confirmed. The owner chose to build on the working assumptions in section 13.1 before then, so a false assumption means rework, not exposure.
 
 **Phase 1: Pilot.** A very small proof of concept, using **non-sensitive test projects only** until accreditor sign-off. Group runner in a group the owner controls, STS, gateway, `.ai-access`, and `ai-code-review`. Use test code resembling real projects. Prove the controls with the section 14 tests, and measure review latency, LLM load and false failures. HA and autoscaling are not required at this stage **(designer's call)**, but no security control is relaxed.
 
 **Phase 2: Production.** Roll out using the order in section 8.1, with HA STS and gateway, sized for about 100 simultaneous jobs and adjusted from pilot data.
 **Gate: written accreditor sign-off**, currently pending, covering:
 - attribution rather than non-repudiation;
-- GitLab admins in the trust boundary;
+- GitLab admins in the trust boundary, including identity mapping's dependence on the email lock;
 - shared runner nodes and need-to-know;
 - extra trust for the chosen access option (group Owners, central project Maintainers, or concentrated data);
 - no content inspection and metadata-only audit.
@@ -360,7 +361,9 @@ If refused, high-risk projects need signed delegation: users sign a time-limited
 | Assumption | Test | If false |
 |---|---|---|
 | GitLab version supports `id_tokens`; version recorded | Test job printing token claims and `CI_SERVER_VERSION` | Redesign identity source |
-| Token contains DN or a directory lookup key | Inspect `user_identities`, `user_email` | Agree a mapping source |
+| Token contains `user_email` and `user_id` | Inspect claims. Confirmed by the baseline probe | Agree a mapping source |
+| Directory lookup by email returns one entry, and its DN matches the user's certificate | Compare for several users | Transform the DN, or agree another mapping source |
+| Regular users can't change their GitLab email | Try with a regular test account | Agree another mapping source |
 | `exp` tracks job timeout | Inspect `iat`, `exp` | Reassess token lifetime |
 | Trigger table holds: push, MR, manual, retry, schedule, trigger token | Run each and record `user_login` | Update attribution docs |
 | `X-Proxied-Entity` value format is a DN | Test call through the gateway | Agree the format with the provider |
@@ -373,6 +376,24 @@ If refused, high-risk projects need signed delegation: users sign a time-limited
 | Instance runner availability | Ask GitLab admins early | Use option 2 or 3 (section 8.1) |
 | Option 3 only: ID token names the triggering user; source code is reachable; findings can reach the source MR; pipeline variable role limits | Test before building option 3 | Do not use option 3 for that purpose |
 | Tokens and prompts stay out of logs, with `CI_DEBUG_TRACE` on | Pilot test; try forcing it off via runner `environment` | Document risk; raise to accreditor |
+
+### 13.1 Working assumptions
+
+Owner's decision, 2026-11-06: write the initial implementation assuming these hold. None is verified yet. Each must be confirmed or corrected before the pilot is deployed, and a false one means changing what's noted.
+
+| # | Assumption | If false, change |
+|---|---|---|
+| 1 | Looking up `mail` returns exactly one entry per user | `EmailAttribute` setting, or the mapping source |
+| 2 | The directory's DN matches the certificate DN exactly, so no transform is needed | Add a transform to the LDAP lookup |
+| 3 | The provider accepts that DN in `X-Proxied-Entity` as it stands | Same transform, agreed with the provider |
+| 4 | Regular users can't change their GitLab email | The mapping source |
+| 5 | The trigger table holds, and bot users have no directory entry | Attribution docs, or add a deny rule |
+| 6 | The enclave reaches GitLab OIDC, the directory and the provider, and runners reach enclave ingress | Network paths, or JWKS sync |
+| 7 | A read-only directory service account is available to STS over LDAPS | Directory access for STS |
+| 8 | Go 1.26, a module mirror, an approved base image and a package mirror exist on the network | Build pipeline and image base |
+| 9 | The license is below Ultimate, so review findings appear only as the MR code quality report | Nothing required. Ultimate adds line-level findings |
+
+Confirmed by the baseline probe, so not assumptions: `user_email`, `user_id` and the other required claims are present, the audience matches, token lifetime tracks the job timeout, and OIDC discovery, issuer and signing key checks pass from the runner.
 
 ## 14. Acceptance tests
 

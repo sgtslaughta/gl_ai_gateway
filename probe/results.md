@@ -6,8 +6,10 @@ Record names of claims, not sensitive values. Commit this only if it holds nothi
 
 | Item | Result | Notes |
 |---|---|---|
-| `identity-mapping` (the gate) | | DN in token, or email lookup? |
-| Provider with the DN, in `user_identities` | | Which provider name? |
+| `identity-mapping` | | `user_email` present? |
+| Directory lookup returns one entry per email | | Which attribute? |
+| Directory DN matches certificate DN | | Any transform needed? Shape only, no real DNs |
+| Regular user can't change email | | |
 | Token claim names present | | |
 | `token-lifetime` | | Seconds, against job timeout |
 | OIDC discovery and signing key | | |
@@ -32,4 +34,4 @@ Record names of claims, not sensitive values. Commit this only if it holds nothi
 
 ## Decision
 
-Build can start: yes / no. Mapping method: ____
+Build can start: yes / no. Directory attribute and DN transform: ____
