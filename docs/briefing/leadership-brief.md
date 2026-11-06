@@ -33,7 +33,7 @@ We propose a token service and gateway that let a job use AI under the identity 
 ### Risks we would be accepting
 
 1. **Identity follows who triggered the job, not who wrote the code.** A malicious commit can act as whoever runs it, for up to 30 minutes.
-2. **GitLab admins are in the trust boundary,** and are outside our team. One who changed a user's email could redirect that user's attribution. Audit logs would show the same user ID under the new email.
+2. **GitLab admins are in the trust boundary,** and are outside our team. One who changed a user's email could redirect that user's attribution. Audit logs would show the same user ID with a different DN.
 3. **The gateway certificate and token signing key are powerful.** Either could claim to be any user, so both need strong protection.
 4. **No content screening.** Prompt injection is limited only by restricting what jobs can do.
 5. **Audit shows who, when and where, but not what was sent.** That is deliberate, given the data involved.

@@ -74,7 +74,6 @@ On an allowed image  → NetworkPolicy limits connections
 | Token has `job_project_path` | Updated probe |
 | Directory returns one entry per email, and its DN matches the certificate (**the deployment gate**) | Phase 0 directory test |
 | `user_login` matches expectations for push, MR, retry, manual, schedule, trigger token and bot | Phase 0 trigger test |
-| `exp` tracks job timeout | Phase 0 probe |
 | Runners reach the enclave; STS reaches JWKS and the directory | Phase 0 network test |
 | `X-Proxied-Entity` format is a DN | Pilot gateway test |
 | OpenAI and Anthropic clients work with the STS token as API key, including streaming | Pilot gateway test |

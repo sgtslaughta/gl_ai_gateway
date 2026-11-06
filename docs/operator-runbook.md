@@ -80,7 +80,7 @@ Sizing: target about 100 simultaneous jobs. Use pilot measures, not guesses.
 Triage first by reading audit records for the user, project, commit, pipeline and job.
 - Suspected stolen gateway token: lifetime is 30 minutes. Wait it out, or rotate the STS key.
 - Suspected misuse by a user: block in the provider (they own limits) and disable the user in GitLab. Use the SHA in the record to tell who wrote the code from who triggered it.
-- Suspected bad email mapping: compare `user_id` over time in the audit log. A changed email for the same `user_id` is a warning sign.
+- Suspected bad email mapping: compare `user_id` over time in the audit log. The same `user_id` with a different DN is a warning sign (audit records hold the DN, not the email).
 - Suspected compromised signing key or client certificate: rotate now, restart, tell the provider.
 - Suspected runner token leak: ask the admin or Owner to reset it, then update the secret.
 - Always record: time, who, what you changed.

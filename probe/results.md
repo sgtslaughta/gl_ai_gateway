@@ -2,7 +2,9 @@
 
 Record names of claims, not sensitive values. Commit this only if it holds nothing sensitive.
 
-**Date:** ____  **Tester:** ____  **GitLab version:** ____  **Tier:** ____
+**Date:** ____  **Tester:** ____
+
+Record the GitLab version and tier privately, not in this repo.
 
 | Item | Result | Notes |
 |---|---|---|
@@ -35,4 +37,4 @@ Record names of claims, not sensitive values. Commit this only if it holds nothi
 
 ## Decision
 
-Build can start: yes / no. Directory attribute and DN transform: ____
+Deployment can start: yes / no. Directory attribute and DN transform: ____

@@ -100,6 +100,21 @@ class ClaimTests(unittest.TestCase):
         del claims["runner_id"]
         self.assertEqual(levels(self.check(claims))["claim:runner_id"], probe.FAIL)
 
+    def test_claim_types_match_what_sts_decodes(self):
+        # STS denies the token if user_id is not a string or runner_id not an integer.
+        for name, bad in (("user_id", 42), ("runner_id", "7"), ("runner_id", True), ("pipeline_id", 1),
+                          ("job_id", 2), ("ref_protected", True)):
+            with self.subTest(name=name, bad=bad):
+                self.assertEqual(levels(self.check(good_claims(**{name: bad})))["type:" + name], probe.FAIL)
+        results = levels(self.check(good_claims()))
+        self.assertEqual(results["type:user_id"], probe.PASS)
+        self.assertEqual(results["type:runner_id"], probe.PASS)
+
+    def test_missing_claim_is_not_also_a_type_failure(self):
+        claims = good_claims()
+        del claims["user_id"]
+        self.assertNotIn("type:user_id", levels(self.check(claims)))
+
     def test_missing_optional_claim_warns(self):
         claims = good_claims()
         del claims["ci_config_ref_uri"]

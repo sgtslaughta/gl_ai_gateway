@@ -31,6 +31,9 @@ REQUIRED_CLAIMS = ("iss", "aud", "exp", "iat", "user_login", "runner_id", "pipel
                    "job_project_path")
 OPTIONAL_CLAIMS = ("ref", "ci_config_ref_uri",
                    "runner_environment", "user_access_level")
+# The STS decodes these as JSON strings (runner_id as an integer) and denies on a mismatch.
+STRING_CLAIMS = ("user_id", "user_login", "project_path", "job_project_path", "sha", "pipeline_id",
+                 "pipeline_source", "job_id", "ref_protected")
 # ponytail: allowlist, so a new GitLab claim stays masked by default.
 SAFE_TO_PRINT = ("iss", "aud", "iat", "exp", "nbf", "runner_id", "runner_environment",
                  "pipeline_source", "ref_protected", "ref_type")
@@ -90,9 +93,22 @@ def _check_lifetime(claims, job_timeout):
     return Result(PASS, "token-lifetime", detail)
 
 
+def _check_types(claims):
+    results = []
+    for name in STRING_CLAIMS:
+        if name in claims:
+            ok = isinstance(claims[name], str)
+            results.append(Result(PASS if ok else FAIL, f"type:{name}", "string" if ok else "not a string; STS denies"))
+    if "runner_id" in claims:
+        ok = isinstance(claims["runner_id"], int) and not isinstance(claims["runner_id"], bool)
+        results.append(Result(PASS if ok else FAIL, "type:runner_id", "integer" if ok else "not an integer; STS denies"))
+    return results
+
+
 def check_claims(claims, expected_aud, job_timeout):
     results = [Result(FAIL, f"claim:{c}", "missing") for c in REQUIRED_CLAIMS if c not in claims]
     results += [Result(WARN, f"claim:{c}", "missing") for c in OPTIONAL_CLAIMS if c not in claims]
+    results += _check_types(claims)
     aud_ok = claims.get("aud") == expected_aud
     results.append(Result(PASS if aud_ok else FAIL, "audience",
                           "matches PROBE_AUD" if aud_ok else "does not match PROBE_AUD"))

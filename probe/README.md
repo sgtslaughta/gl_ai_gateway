@@ -53,13 +53,13 @@ openssl pkcs12 -in your.p12 -nokeys -clcerts | openssl x509 -noout -subject -nam
 ldapsearch -x -LLL -o ldif-wrap=no -H ldaps://ldap.example.internal:636 -D "<bind-dn>" -W -b "<base-dn>" "(mail=<email>)" dn
 ```
 
-Each email must return exactly one entry, with the same DN as the certificate. Any other result blocks the build until a fix is agreed. Also confirm that a regular test account can't change its email.
+Each email must return exactly one entry, with the same DN as the certificate. Any other result blocks deployment until a fix is agreed. Also confirm that a regular test account can't change its email.
 
 ## Reading results
 
 | Check | If it fails or warns |
 |---|---|
-| `identity-mapping` | **Part of the gate to build.** `PASS` means the token has `user_email` for STS's directory lookup. `FAIL` means agree another mapping source |
+| `identity-mapping` | **Part of the gate to deploy.** `PASS` means the token has `user_email` for STS's directory lookup. `FAIL` means agree another mapping source |
 | `gitlab-version` | `FAIL` below 15.7 means redesigning the identity source. `WARN` below 18.4 only affects Phase 4 |
 | `claim:*` | A missing required claim breaks an STS policy check, so review the design for it |
 | `token-lifetime` | `WARN` means expiry doesn't track job timeout, so reassess the token lifetime |
