@@ -245,3 +245,26 @@ func TestSignerPublishesAllKeys(t *testing.T) {
 }
 
 func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+func TestConcurrentColdStart(t *testing.T) {
+	e := setup(t)
+	raw, _ := e.s.Sign(goodClaims())
+	const n = 20
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			errs <- e.v.Verify(context.Background(), raw, &Claims{})
+		}()
+	}
+	close(start)
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("spurious rejection: %v", err)
+		}
+	}
+	if got := e.fetch.Load(); got != 1 {
+		t.Fatalf("fetches=%d, want 1", got)
+	}
+}

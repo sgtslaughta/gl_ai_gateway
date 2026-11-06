@@ -36,8 +36,10 @@ type Verifier struct {
 	client *http.Client
 	parser *jwt.Parser
 
-	mu      sync.RWMutex
-	keys    map[string]*rsa.PublicKey
+	mu   sync.RWMutex // guards keys only; never held across HTTP
+	keys map[string]*rsa.PublicKey
+
+	fetchMu sync.Mutex // serializes refreshes; guards lastTry
 	lastTry time.Time
 	now     func() time.Time
 }
@@ -100,28 +102,34 @@ func sanitize(err error) string {
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	v.mu.RLock()
-	k, ok := v.keys[kid]
-	v.mu.RUnlock()
-	if ok {
+	if k, ok := v.lookup(kid); ok {
 		return k, nil
 	}
-	if err := v.refresh(ctx); err != nil {
+	if err := v.refresh(ctx, kid); err != nil {
 		return nil, err
 	}
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	if k, ok := v.keys[kid]; ok {
+	if k, ok := v.lookup(kid); ok {
 		return k, nil
 	}
 	return nil, errors.New("unknown kid")
 }
 
+func (v *Verifier) lookup(kid string) (*rsa.PublicKey, bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	k, ok := v.keys[kid]
+	return k, ok
+}
+
 // refresh fetches the JWKS, at most once per refreshInterval. Cached keys
 // are kept when a fetch fails.
-func (v *Verifier) refresh(ctx context.Context) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+func (v *Verifier) refresh(ctx context.Context, kid string) error {
+	v.fetchMu.Lock()
+	defer v.fetchMu.Unlock()
+	// A concurrent refresh may have just loaded the key.
+	if _, ok := v.lookup(kid); ok {
+		return nil
+	}
 	if !v.lastTry.IsZero() && v.now().Sub(v.lastTry) < refreshInterval {
 		return errors.New("jwks refresh rate limited")
 	}
@@ -148,6 +156,8 @@ func (v *Verifier) refresh(ctx context.Context) error {
 			keys[j.Kid] = pk
 		}
 	}
+	v.mu.Lock()
 	v.keys = keys
+	v.mu.Unlock()
 	return nil
 }
