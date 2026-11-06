@@ -10,6 +10,7 @@ Record names of claims, not sensitive values. Commit this only if it holds nothi
 | Directory lookup returns one entry per email | | Which attribute? |
 | Directory DN matches certificate DN | | Any transform needed? Shape only, no real DNs |
 | Regular user can't change email | | |
+| `job_project_path` in token, equal to `project_path` on a normal job | | Required by STS's fork rule |
 | Token claim names present | | |
 | `token-lifetime` | | Seconds, against job timeout |
 | OIDC discovery and signing key | | |

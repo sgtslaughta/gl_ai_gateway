@@ -1,6 +1,6 @@
 # Leadership brief: AI in GitLab CI without personal certificates
 
-**Status, 2026-11-06:** Design approved. Baseline probe run: the token has the lookup key STS needs. DN comparison, trigger and network tests are pending. No services built.
+**Status, 2026-11-06:** Design approved. Initial code written and tested locally, with mapping and fork rules set. Baseline probe passed. Nothing is deployed: the remaining probe tests and working assumptions must be confirmed first.
 **Ask:** Approve a small pilot on non-sensitive test projects, and sponsor two decisions outside the team (below).
 
 ## Bottom line
@@ -44,8 +44,8 @@ We propose a token service and gateway that let a job use AI under the identity 
 
 | Phase | Outcome | Gate to pass first |
 |---|---|---|
-| **0. Validate (current)** | Probe confirms our GitLab supports this | None |
-| **1. Pilot** | Very small proof of concept, non-sensitive test projects only | Identity mapping confirmed |
+| **0. Validate (current)** | Probe confirms our GitLab supports this. Initial code is written | None |
+| **1. Pilot** | Very small proof of concept, non-sensitive test projects only | Directory DN matches the certificate DN, and working assumptions confirmed |
 | **2. Production** | About 100 simultaneous jobs at peak | Written accreditor sign-off, and acceptance tests pass |
 | **3. MR comments** | Findings posted as comments | Users need more than reports |
 | **4. Agent fixes** | Opt-in fixes on separate branches | GitLab 18.4+, plus added safeguards |
@@ -63,6 +63,6 @@ We propose a token service and gateway that let a job use AI under the identity 
 
 ## Not yet known
 
-- **Whether the design fully works on our GitLab.** The remaining probe tests decide this, and the build waits on them.
+- **Whether the design fully works on our GitLab.** Code was written on stated assumptions so the team could move ahead. The remaining probe tests decide whether they hold, and deployment waits on them. A false assumption means rework, not exposure.
 - **Cost, staffing and schedule.** Not estimated yet. Pilot load data will inform sizing.
 - **Accreditor position.** If refused, high-risk projects would need signed user delegation, which adds certificate handling for those users.

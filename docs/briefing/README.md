@@ -5,6 +5,7 @@
 | **Leaders** | [Leadership brief](leadership-brief.md) |
 | **Decision makers** | [Options brief](options-decision-brief.md): trade-offs, schematics and SWOTs |
 | **Engineers** | [Peer technical brief](peer-technical-brief.md) |
+| **Pilot operators and users** | [User guide](../user-guide.md), [runbook](../operator-runbook.md), [admin request](../admin-request.md), [accreditor package](../accreditor-package.md), [pilot results](../pilot-results.md) |
 | **Live briefing** | [Slide deck](gitlab-runner-ai-access-briefing.pptx): main deck for everyone, appendix for engineers, speaker notes on every slide |
 
 ## Diagrams
