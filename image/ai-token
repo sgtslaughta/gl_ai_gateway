@@ -1,0 +1,55 @@
+#!/bin/sh
+# Source me: . ai-token
+# Exchanges the GitLab ID token (AI_ID_TOKEN) at the STS for a short-lived
+# gateway token and exports the OpenAI/Anthropic client variables.
+# Uses return, not exit, because it is sourced. Never prints tokens.
+
+_ai_t_fail() { echo "ai-token: $*" >&2; }
+
+_ai_t_main() {
+    for _ai_v in AI_ID_TOKEN AI_STS_URL AI_GATEWAY_URL; do
+        eval "_ai_val=\${$_ai_v:-}"
+        if [ -z "$_ai_val" ]; then
+            _ai_t_fail "$_ai_v is not set"
+            return 1
+        fi
+    done
+    _ai_gw=${AI_GATEWAY_URL%/}
+    _ai_out=$(printf '%s' "$AI_ID_TOKEN" | curl -sS --max-time 30 \
+        -o - -w '\n%{http_code}' \
+        -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+        -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+        --data-urlencode subject_token@- \
+        "${AI_STS_URL%/}/token" 2>/dev/null) || {
+        _ai_t_fail "STS unreachable at ${AI_STS_URL%/}; check the runner network and AI_STS_URL"
+        return 1
+    }
+    _ai_code=${_ai_out##*
+}
+    _ai_body=${_ai_out%
+*}
+    if [ "$_ai_code" != 200 ]; then
+        _ai_reason=$(printf '%s' "$_ai_body" | jq -r '.error // empty' 2>/dev/null |
+            tr -cd 'A-Za-z0-9_.-' | cut -c1-64)
+        _ai_t_fail "token exchange denied (HTTP $_ai_code): ${_ai_reason:-unknown_reason}"
+        return 1
+    fi
+    _ai_tok=$(printf '%s' "$_ai_body" | jq -r '.access_token // empty' 2>/dev/null)
+    if [ -z "$_ai_tok" ]; then
+        _ai_t_fail "STS response had no access_token"
+        return 1
+    fi
+    OPENAI_BASE_URL="$_ai_gw/v1"
+    OPENAI_API_KEY=$_ai_tok
+    ANTHROPIC_BASE_URL=$_ai_gw
+    ANTHROPIC_API_KEY=$_ai_tok
+    export OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY
+    unset AI_ID_TOKEN
+}
+
+_ai_t_main
+_ai_t_rc=$?
+unset -f _ai_t_main _ai_t_fail 2>/dev/null || true
+unset _ai_v _ai_val _ai_gw _ai_out _ai_code _ai_body _ai_reason _ai_tok
+# shellcheck disable=SC2317
+return "$_ai_t_rc" 2>/dev/null || exit "$_ai_t_rc"

@@ -1,0 +1,79 @@
+# Image pipeline for ai-hardened/ai-base. Protected branches only.
+# All values below are placeholders (*.example.internal); override in project
+# CI/CD variables. SBOM, scanner and signing tools vary by network: set
+# SBOM_CMD, SCAN_CMD and SIGN_CMD to the approved tools, or leave SIGN_CMD empty.
+# Not yet run against a real registry (deferred to the owner's network).
+
+variables:
+  REGISTRY: registry.example.internal
+  IMAGE_NAME: ai-hardened/ai-base
+  BASE_IMAGE: registry.example.internal/approved/debian:bookworm-slim  # pin @sha256:<digest> here
+  APT_MIRROR: ""                     # e.g. https://mirror.example.internal/debian
+  RUNNER_HELPER_SRC: registry.example.internal/mirror/gitlab-runner-helper:CHANGE_ME
+  RUNNER_HELPER_DST: registry.example.internal/ai-hardened/gitlab-runner-helper
+  RUNNER_HELPER_VERSION: CHANGE_ME   # semver tag of the helper being mirrored
+  SBOM_CMD: ""                       # e.g. 'syft "$CANDIDATE" -o cyclonedx-json > sbom.json'
+  SCAN_CMD: ""                       # must exit non-zero at the agreed severity threshold
+  SIGN_CMD: ""                       # optional, e.g. 'cosign sign --key ... "$IMAGE_REF"'
+  CANDIDATE: $REGISTRY/$IMAGE_NAME:candidate-$CI_COMMIT_SHORT_SHA
+
+stages: [test, build, verify, release]
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+
+default:
+  tags: [image-build]               # placeholder runner tag
+
+unit-tests:
+  stage: test
+  image: python:3-slim
+  script:
+    - apt-get update -qq && apt-get install -y -qq curl jq shellcheck
+    - python3 -m unittest discover image/tests
+    - shellcheck -s sh image/ai-token image/tests/smoke.sh
+
+build:
+  stage: build
+  image: docker:cli
+  script:
+    - docker build --build-arg BASE_IMAGE="$BASE_IMAGE" --build-arg APT_MIRROR="$APT_MIRROR" -t "$CANDIDATE" image
+    - docker run --rm -v "$PWD/image/tests:/t:ro" "$CANDIDATE" sh /t/smoke.sh
+    - docker push "$CANDIDATE"
+
+sbom:
+  stage: verify
+  image: docker:cli
+  script:
+    - '[ -n "$SBOM_CMD" ] || { echo "SBOM_CMD is not set"; exit 1; }'
+    - sh -c "$SBOM_CMD"
+  artifacts:
+    paths: [sbom.json]
+    expire_in: 90 days
+
+scan:
+  stage: verify
+  image: docker:cli
+  script:
+    - '[ -n "$SCAN_CMD" ] || { echo "SCAN_CMD is not set"; exit 1; }'
+    - sh -c "$SCAN_CMD"
+
+release:
+  stage: release
+  image: docker:cli
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  script:
+    - VERSION=$(cat image/VERSION)
+    - IMAGE_REF=$REGISTRY/$IMAGE_NAME:$VERSION
+    - export IMAGE_REF
+    - if docker manifest inspect "$IMAGE_REF" >/dev/null 2>&1; then echo "$IMAGE_REF exists; versions are immutable, bump image/VERSION"; exit 1; fi
+    - docker pull "$CANDIDATE"
+    - docker tag "$CANDIDATE" "$IMAGE_REF"
+    - docker push "$IMAGE_REF"
+    - '[ -z "$SIGN_CMD" ] || sh -c "$SIGN_CMD"'
+    # Mirror the runner helper image (not governed by allowed_images).
+    - docker pull "$RUNNER_HELPER_SRC"
+    - docker tag "$RUNNER_HELPER_SRC" "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"
+    - docker push "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"
