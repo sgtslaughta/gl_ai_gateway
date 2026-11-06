@@ -1,7 +1,8 @@
 # Pilot acceptance jobs (spec section 14). NOT RUN YET.
 # Use a NON-SENSITIVE private test project only. Read README.md first.
-# Copy the include below to point at your template project and tag.
-# Each job prints PASS or FAIL. Record outcomes in docs/pilot-results.md.
+# A job prints "PILOT-RESULT: PASS" only when the control worked. Any other
+# outcome is a FAIL. Jobs that must fail by design use allow_failure so the
+# later stages still run; read them as the README says.
 include:
   - project: platform/ai-ci-templates
     ref: v1.0.0
@@ -11,98 +12,148 @@ stages: [probe, deny, attribution, routes, clients, trigger]
 
 variables:
   # Set these as CI/CD variables in the test project, not here.
-  # PROBE_BLOCKED: a destination that must be unreachable from the AI runner.
-  # PILOT_MODEL: model name your provider account may call.
+  # PROBE_BLOCKED: a target KNOWN to be reachable from outside the runner network.
+  # PILOT_MODEL: a model your provider account may call. Must not stay "example-model".
   PILOT_MODEL: example-model
+  PILOT_OVERSIZE_BYTES: "20000000"   # must exceed GATEWAY_MAX_BODY_BYTES
 
 .manual-only:
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "push"
 
-# Needs a token. Fails if the exchange is denied.
+# Needs a token. The template's before_script fails the job if denied.
 .expect-token:
   extends: [.ai-access, .manual-only]
 
-# Expects the exchange to be denied. Does not use the default before_script.
+# Needs a real model name. Source it in jobs that call the provider.
+.need-model: &need-model |
+  if [ -z "$PILOT_MODEL" ] || [ "$PILOT_MODEL" = example-model ]; then
+    echo "PILOT-RESULT: FAIL (set PILOT_MODEL to a real model)"; exit 1
+  fi
+
+# Expects the exchange to be denied with HTTP 403 and one exact reason.
+# Set EXPECT_REASON in the job. Any other failure is a FAIL.
 .expect-no-token:
   extends: .ai-access
   before_script: []
   script:
     - |
-      if (. ai-token) 2>err.txt; then
-        echo "FAIL: a token was issued"; exit 1
+      rc=0; (. ai-token) 2>err.txt || rc=$?
+      cat err.txt
+      if [ "$rc" = 0 ]; then echo "PILOT-RESULT: FAIL (a token was issued)"; exit 1; fi
+      if grep -q "token exchange denied (HTTP 403)" err.txt && grep -q "$EXPECT_REASON" err.txt; then
+        echo "PILOT-RESULT: PASS (denied: $EXPECT_REASON)"
+      else
+        echo "PILOT-RESULT: FAIL (expected HTTP 403 with $EXPECT_REASON)"; exit 1
       fi
-      echo "denied as expected:"; cat err.txt; echo "PASS"
+
+# --- Positive controls: STS is reachable and issues tokens ---------------
+# Same runner, allowed sources. Denials below only mean something if these pass.
+control-web-protected:
+  extends: .ai-access
+  stage: probe
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - test -n "$OPENAI_API_KEY" && echo "PILOT-RESULT: PASS (token issued)"
+
+control-push-unprotected:
+  extends: .ai-access
+  stage: probe
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "false"
+  script:
+    - test -n "$OPENAI_API_KEY" && echo "PILOT-RESULT: PASS (push on unprotected ref gets a token)"
 
 # --- Blocked destination -------------------------------------------------
+# Pass only if the blocked target is refused or times out (curl 7 or 28) AND
+# the gateway is reachable from this same job.
 blocked-destination:
   extends: [.ai-access, .manual-only]
   stage: probe
   before_script: []
   script:
-    - test -n "$PROBE_BLOCKED" || { echo "set PROBE_BLOCKED"; exit 1; }
+    - test -n "$PROBE_BLOCKED" || { echo "PILOT-RESULT: FAIL (set PROBE_BLOCKED)"; exit 1; }
     - |
-      if curl -sS --max-time 10 -o /dev/null "$PROBE_BLOCKED"; then
-        echo "FAIL: blocked destination reachable"; exit 1
-      fi
-      echo PASS
+      rc=0; curl -sS --connect-timeout 10 --max-time 15 -o /dev/null "$AI_GATEWAY_URL/v1/models" || rc=$?
+      if [ "$rc" != 0 ]; then echo "PILOT-RESULT: FAIL (control: gateway unreachable, curl $rc)"; exit 1; fi
+      rc=0; curl -sS --connect-timeout 10 --max-time 15 -o /dev/null "$PROBE_BLOCKED" || rc=$?
+      case "$rc" in
+        7|28) echo "PILOT-RESULT: PASS (blocked target: curl exit $rc)" ;;
+        0)    echo "PILOT-RESULT: FAIL (blocked target reachable)"; exit 1 ;;
+        *)    echo "PILOT-RESULT: FAIL (curl exit $rc is not refused or timeout)"; exit 1 ;;
+      esac
 
-# --- Image and user controls --------------------------------------------
-# Expected: job refused by the runner (allowed_images). Job FAILS is the pass.
-# Mark it by checking the job log says the image is not allowed.
+# --- Image and user controls (expected to fail; allow_failure) -----------
+# Pass = the runner refuses the image before the script starts.
+# FAIL = log contains "PILOT-RESULT: FAIL".
 disallowed-image:
   stage: deny
   tags: [ai]
   image: docker.io/library/alpine:3
+  allow_failure: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
-  script: [echo "FAIL: this job should never start"]
+  script:
+    - echo "PILOT-RESULT: FAIL (disallowed image started)"; exit 1
 
-# Expected: refused, or runs as non-root.
+# Pass = runner refuses the root request, or the job runs with uid != 0.
+# FAIL = log contains "PILOT-RESULT: FAIL". Needs GitLab 18.0+, Runner 17.11+.
 request-root:
   extends: [.ai-access, .manual-only]
   stage: deny
+  allow_failure: true
   image:
     name: registry.example.internal/ai-hardened/ai-base:1.0.0
-    docker:
+    kubernetes:
       user: "0"
   before_script: []
   script:
     - |
-      if [ "$(id -u)" = 0 ]; then echo "FAIL: running as root"; exit 1; fi
-      echo "PASS: uid $(id -u)"
+      if test "$(id -u)" != 0; then echo "PILOT-RESULT: PASS (ran, uid $(id -u))"
+      else echo "PILOT-RESULT: FAIL (running as root)"; exit 1; fi
 
 # --- Token and log hygiene ----------------------------------------------
-# Set CI/CD variable CI_DEBUG_TRACE=true for this pipeline run only (web run).
-# Then download the log and search it for token material (see README.md).
+# Runs only when the dedicated variable PILOT_DEBUG_TRACE=true is set for a
+# web run. CI_DEBUG_TRACE is set for THIS job only. Its log may contain secrets:
+# follow the README before sharing or keeping it.
 debug-trace-log:
-  extends: .expect-token
+  extends: .ai-access
   stage: deny
+  variables:
+    CI_DEBUG_TRACE: "true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" && $PILOT_DEBUG_TRACE == "true"
   script:
     - echo "marker-start"
     - 'curl -sS --max-time 30 -H "Authorization: Bearer $OPENAI_API_KEY" "$AI_GATEWAY_URL/v1/models" -o /dev/null -w "models: %{http_code}\n"'
     - echo "marker-end"
-  # To test forced-off, set CI_DEBUG_TRACE=false in the runner environment
-  # and repeat. Record whether the runner honored it.
 
 # --- Attribution and spoofing -------------------------------------------
+# PASS here only means the call returned 200. The control is proved by the
+# provider record for this job (see README), not by this job.
 spoofed-identity:
   extends: .expect-token
   stage: attribution
   script:
+    - *need-model
     - |
-      curl -sS --max-time 60 "$AI_GATEWAY_URL/v1/chat/completions" \
+      code=$(curl -sS --max-time 60 "$AI_GATEWAY_URL/v1/chat/completions" \
         -H "Authorization: Bearer $OPENAI_API_KEY" \
         -H "Content-Type: application/json" \
         -H "X-Proxied-Entity: CN=Someone Else,O=Example" \
         -H "x-litellm-spend-logs-metadata: {\"project_path\":\"spoofed\"}" \
         -H "x-litellm-user: someone-else" \
         -d "{\"model\":\"$PILOT_MODEL\",\"user\":\"someone-else\",\"metadata\":{\"user\":\"someone-else\",\"project_path\":\"spoofed\"},\"messages\":[{\"role\":\"user\",\"content\":\"Say OK.\"}],\"max_tokens\":5}" \
-        -o /dev/null -w "spoof call: %{http_code}\n"
-    - echo "Now compare provider records with docs/pilot-results.md. Job ID $CI_JOB_ID"
+        -o /dev/null -w '%{http_code}') || code=curl-failed
+      echo "spoof call: $code"
+      [ "$code" = 200 ] || { echo "PILOT-RESULT: FAIL (expected 200, got $code)"; exit 1; }
+    - echo "PILOT-RESULT: CALL-OK. Provider must now confirm a record for job $CI_JOB_ID. Not a pass until then."
 
 # --- Rejected routes and sizes ------------------------------------------
+# Listed routes must return exactly 403. Oversize must return exactly 413.
+# 401, 000 (curl failed) or anything else is a FAIL.
 rejected-routes:
   extends: .expect-token
   stage: routes
@@ -112,72 +163,82 @@ rejected-routes:
       for p in /v1/batches /v1/files /key/generate /user/new /model/new /config/update /health; do
         for m in GET POST; do
           code=$(curl -sS --max-time 20 -X "$m" -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -H "Content-Type: application/json" -d '{}' -o /dev/null -w '%{http_code}' "$AI_GATEWAY_URL$p")
-          echo "$m $p -> $code"
-          case "$code" in 2*) fail=1 ;; esac
+            -H "Content-Type: application/json" -d '{}' -o /dev/null -w '%{http_code}' "$AI_GATEWAY_URL$p") || code=000
+          echo "$m $p -> $code (expect 403)"
+          [ "$code" = 403 ] || fail=1
         done
       done
-      head -c 20000000 /dev/zero | tr '\0' 'a' > big.txt
+      head -c "$PILOT_OVERSIZE_BYTES" /dev/zero | tr '\0' 'a' > big.txt
       code=$(curl -sS --max-time 60 -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
-        --data-binary @big.txt -o /dev/null -w '%{http_code}' "$AI_GATEWAY_URL/v1/chat/completions")
+        --data-binary @big.txt -o /dev/null -w '%{http_code}' "$AI_GATEWAY_URL/v1/chat/completions") || code=000
       echo "oversized -> $code (expect 413)"
       [ "$code" = 413 ] || fail=1
-      [ "$fail" = 0 ] && echo PASS || { echo FAIL; exit 1; }
+      if [ "$fail" = 0 ]; then echo "PILOT-RESULT: PASS"; else echo "PILOT-RESULT: FAIL"; exit 1; fi
 
-# Client-supplied headers must not reach LiteLLM. Check the provider side.
+# Client-supplied headers must not reach LiteLLM. Proved on the provider side.
 forged-headers:
   extends: .expect-token
   stage: routes
   script:
+    - *need-model
     - |
-      curl -sS --max-time 60 "$AI_GATEWAY_URL/v1/chat/completions" \
+      code=$(curl -sS --max-time 60 "$AI_GATEWAY_URL/v1/chat/completions" \
         -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
         -H "x-litellm-api-key: forged" -H "x-litellm-tags: forged" -H "x-api-key: $OPENAI_API_KEY" \
         -d "{\"model\":\"$PILOT_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say OK.\"}],\"max_tokens\":5}" \
-        -o /dev/null -w "forged headers call: %{http_code}\n"
-    - echo "Ask provider whether any x-litellm-* value 'forged' was received. Job $CI_JOB_ID"
+        -o /dev/null -w '%{http_code}') || code=curl-failed
+      echo "forged headers call: $code"
+      [ "$code" = 200 ] || { echo "PILOT-RESULT: FAIL (expected 200, got $code)"; exit 1; }
+    - echo "PILOT-RESULT: CALL-OK. Provider must confirm a record for job $CI_JOB_ID with no 'forged' value. Not a pass until then."
 
 # --- Both client styles, streaming and not -------------------------------
 client-openai:
   extends: .expect-token
   stage: clients
   script:
+    - *need-model
     - |
       for s in false true; do
-        curl -sS --max-time 90 "$OPENAI_BASE_URL/chat/completions" \
+        code=$(curl -sS --max-time 90 "$OPENAI_BASE_URL/chat/completions" \
           -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
           -d "{\"model\":\"$PILOT_MODEL\",\"stream\":$s,\"messages\":[{\"role\":\"user\",\"content\":\"Say OK.\"}],\"max_tokens\":5}" \
-          -o out-$s.txt -w "openai stream=$s: %{http_code}\n"
+          -o out-$s.txt -w '%{http_code}') || code=curl-failed
+        echo "openai stream=$s: $code"
+        [ "$code" = 200 ] || { echo "PILOT-RESULT: FAIL"; exit 1; }
       done
-    - grep -q '"choices"' out-false.txt && echo "non-stream body ok"
-    - grep -q '^data:' out-true.txt && echo "stream body ok"
+    - grep -q '"choices"' out-false.txt && grep -q '^data:' out-true.txt && echo "PILOT-RESULT: CALL-OK (confirm user attribution at the provider, job $CI_JOB_ID)"
 
 client-anthropic:
   extends: .expect-token
   stage: clients
   script:
+    - *need-model
     - |
       for s in false true; do
-        curl -sS --max-time 90 "$ANTHROPIC_BASE_URL/v1/messages" \
+        code=$(curl -sS --max-time 90 "$ANTHROPIC_BASE_URL/v1/messages" \
           -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
           -d "{\"model\":\"$PILOT_MODEL\",\"stream\":$s,\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"Say OK.\"}]}" \
-          -o out-$s.txt -w "anthropic stream=$s: %{http_code}\n"
+          -o out-$s.txt -w '%{http_code}') || code=curl-failed
+        echo "anthropic stream=$s: $code"
+        [ "$code" = 200 ] || { echo "PILOT-RESULT: FAIL"; exit 1; }
       done
-    - grep -q '"content"' out-false.txt && echo "non-stream body ok"
-    - grep -q '^event:' out-true.txt && echo "stream body ok"
+    - grep -q '"content"' out-false.txt && grep -q '^event:' out-true.txt && echo "PILOT-RESULT: CALL-OK (confirm user attribution at the provider, job $CI_JOB_ID)"
 
-# --- Unprotected ref: token must be denied -------------------------------
-# Run these on an UNPROTECTED branch, started as a schedule, a trigger token
-# and a child pipeline. Each must print PASS.
+# --- Denials: exact reason required --------------------------------------
+# Run these on an UNPROTECTED branch (schedule, trigger token, child pipeline).
 schedule-unprotected:
   extends: .expect-no-token
   stage: trigger
+  variables:
+    EXPECT_REASON: ref_not_protected
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_REF_PROTECTED == "false"
 
 trigger-unprotected:
   extends: .expect-no-token
   stage: trigger
+  variables:
+    EXPECT_REASON: ref_not_protected
   rules:
     - if: $CI_PIPELINE_SOURCE == "trigger" && $CI_COMMIT_REF_PROTECTED == "false"
 
@@ -188,3 +249,13 @@ child-unprotected:
   trigger:
     include: tests/pilot/child.yml
     strategy: depend
+
+# Run on a runner that is NOT on the STS list. Set PILOT_UNLISTED_TAG to its tag.
+unlisted-runner:
+  extends: .expect-no-token
+  stage: trigger
+  tags: [$PILOT_UNLISTED_TAG]
+  variables:
+    EXPECT_REASON: runner_not_allowed
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" && $PILOT_UNLISTED_TAG

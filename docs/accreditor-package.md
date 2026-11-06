@@ -25,6 +25,10 @@ wrote or approved the request. Do not rely on it as non-repudiation.
 4. **The gateway certificate can claim any user.** So can the STS signing key.
 5. **Identity mapping depends on GitLab's email lock.** STS looks up the signed `user_email` in the directory and uses the DN returned. Anything but exactly one match is denied. Users cannot change their email, but a GitLab admin can, which would redirect that user's attribution. The audit log records the unchanging `user_id` and `job_project_path`, so such a change can be found afterward.
 6. **Extra trust depends on the access option:** group Owners under option 2, central project Maintainers under option 3.
+7. **No content controls exist.** Neither this gateway nor the LLM API gateway screens prompts. Injection defense relies only on limiting what a job can do.
+8. **Audit shows who, when and where, not what.** After an incident, nobody can show what was sent. This is by design.
+
+**Data handling:** AI use is capped at GitLab's classification level. The owner states that engineers and admins with node access have incidental exposure protection, so node-level admin access is not a concern in this design.
 
 ## Sign-off list (design section 12)
 Written sign-off is requested on these points. Status: **pending**.

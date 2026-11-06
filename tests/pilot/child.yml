@@ -1,4 +1,5 @@
-# Child pipeline for the pilot. On an unprotected ref the token must be denied.
+# Child pipeline for the pilot. On an unprotected ref the exchange must be
+# denied with HTTP 403 and ref_not_protected. Any other outcome is a FAIL.
 include:
   - project: platform/ai-ci-templates
     ref: v1.0.0
@@ -9,7 +10,11 @@ child-expect-no-token:
   before_script: []
   script:
     - |
-      if (. ai-token) 2>err.txt; then
-        echo "FAIL: a token was issued"; exit 1
+      rc=0; (. ai-token) 2>err.txt || rc=$?
+      cat err.txt
+      if [ "$rc" = 0 ]; then echo "PILOT-RESULT: FAIL (a token was issued)"; exit 1; fi
+      if grep -q "token exchange denied (HTTP 403)" err.txt && grep -q "ref_not_protected" err.txt; then
+        echo "PILOT-RESULT: PASS (denied: ref_not_protected)"
+      else
+        echo "PILOT-RESULT: FAIL (expected HTTP 403 with ref_not_protected)"; exit 1
       fi
-      cat err.txt; echo "PASS"

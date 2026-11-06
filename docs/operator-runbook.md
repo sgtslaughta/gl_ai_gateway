@@ -23,7 +23,7 @@ What this means:
 **Emergency: clear cached keys.** If a GitLab or STS signing key is
 compromised, restart the service so it drops its cache and fetches fresh keys.
 - Compromised GitLab signing key: restart STS.
-- Compromised STS signing key: remove it from the key secret (see rotation), then restart STS and the gateway.
+- Compromised STS signing key: replace it with a fresh key (see rotation), then restart STS and the gateway. Do not just delete the file. `STS_SIGNING_KEYS` lists both `current.pem` and `next.pem`, and a missing file stops STS from starting.
 - Restart with the normal rollout tool for the pod. Check pod readiness and run one test job afterwards.
 - Restart only after the source publishes the corrected key set. A restart clears the cache, so while the source is down or empty the service starts with no keys and denies everything.
 
@@ -38,7 +38,7 @@ AI jobs failing.
 ## Signing key rotation (STS)
 Secret `sts-signing-keys` holds `current.pem` and `next.pem`.
 1. Generate a new key. Put it in `next.pem`. Keep `current.pem`. Roll out STS. Both keys are published.
-2. Wait at least the gateway refresh (10 minutes) plus the longest token life (30 minutes). Confirm the gateway sees the new key.
+2. Wait until the gateway has fetched the new key. Only key publication matters here. A token with an unknown key ID makes the gateway refresh on demand, limited to once a minute, so the wait is short. Confirm with a test job.
 3. Promote: swap so the new key is `current.pem`. Roll out STS.
 4. After 30 more minutes (old tokens expired), put a fresh key in `next.pem`.
 5. If the old key was compromised, skip waiting: promote, roll out, then restart STS and the gateway to clear caches.

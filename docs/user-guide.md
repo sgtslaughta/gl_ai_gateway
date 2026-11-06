@@ -92,9 +92,12 @@ When the token exchange fails, the job log shows `ai-token: token exchange denie
 | `sign_failed` | 500 | The service could not sign a token | Retry. Tell the operators if it repeats |
 | `audit_failed` | 500 | The service could not write its audit record, so it issues nothing | Retry. Tell the operators if it repeats |
 
-Gateway errors are plain text: `401 unauthorized` (bad or expired token),
-`403 route not allowed`, `413 request body too large`, `502 bad gateway`
-(provider unreachable).
+Gateway errors are plain text:
+- `401 unauthorized`: bad or expired token.
+- `400 upgrade not supported`: the request asked for a protocol upgrade.
+- `403 route not allowed; batch and other endpoints are served by <batch service address>`: route not on the list. Use the address shown for bulk work.
+- `413 request body too large`.
+- `502 bad gateway`: the provider is unreachable.
 
 ## What not to log
 - Never print `AI_ID_TOKEN`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.

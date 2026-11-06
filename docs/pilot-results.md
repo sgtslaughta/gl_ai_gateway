@@ -7,7 +7,8 @@ treat anything here as evidence until it is filled in with real run data.
 Fill in: result (PASS, FAIL or N/A), date, who ran it, job or pipeline link,
 and notes. A single FAIL blocks Phase 2 until fixed.
 
-Environment: GitLab version ____  Tier ____  Date ____  Operator ____
+Environment: Date ____  Operator ____
+Record the GitLab version and tier privately, not in this public repo. Write only "recorded privately" here.
 
 ## Section 14 acceptance tests
 
@@ -41,7 +42,7 @@ Environment: GitLab version ____  Tier ____  Date ____  Operator ____
 | 26 | No body content in STS, gateway or runner logs | | | | |
 | 27 | Code review on test MR shows findings with no write credential present | | | | |
 | 28 | `ai-base`: review and token exchange run as non-root | | | | |
-| 29 | `ai-base`: no package manager, no setuid binaries | | | | |
+| 29 | `ai-base`: no package manager, no setuid binaries. Note: `dpkg` is kept on purpose, a deviation from the design. See `accreditor-package.md` | | | | |
 | 30 | `ai-base`: no secrets | | | | |
 | 31 | `ai-base`: passing scan | | | | |
 | 32 | `ai-base`: SBOM produced | | | | |
