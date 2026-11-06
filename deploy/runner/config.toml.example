@@ -8,6 +8,9 @@ concurrent = 2          # pilot: low
   token = "REPLACE_WITH_RUNNER_AUTH_TOKEN"   # from secret store, not the repo
   executor = "kubernetes"
   limit = 2             # pilot: low
+  # "environment" belongs to the [[runners]] section. Writable HOME per the Runner docs
+  # (matches the emptyDir mounted at /home/ai below).
+  environment = ["HOME=/home/ai"]
   # No shared cache: [runners.cache] intentionally omitted.
 
   [runners.kubernetes]
@@ -59,6 +62,9 @@ concurrent = 2          # pilot: low
       [runners.kubernetes.init_permissions_container_security_context.capabilities]
         drop = ["ALL"]
 
+    # UNTESTED: the helper as UID 10001 with a read-only root filesystem may fail
+    # (it writes under /builds and its home). Test this first in the pilot and
+    # relax read_only_root_filesystem for the helper only if the job cannot start.
     [runners.kubernetes.helper_container_security_context]
       run_as_user = 10001
       run_as_group = 10001

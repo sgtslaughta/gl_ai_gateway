@@ -6,6 +6,8 @@ ARG RUN_IMAGE=gcr.io/distroless/static-debian12:nonroot
 
 FROM ${GO_IMAGE} AS build
 ARG TARGET
+# Module mirror for networks without direct access, e.g. https://goproxy.example.internal
+ARG GOPROXY
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
