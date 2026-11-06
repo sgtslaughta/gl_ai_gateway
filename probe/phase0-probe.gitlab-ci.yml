@@ -1,0 +1,26 @@
+# Phase 0 probe. Copy this file and phase0_probe.py into a PRIVATE test project.
+# Replace every *.example.internal value, the runner tag and the image first.
+# Run each trigger in README.md and record results in probe/results.md.
+
+phase0-probe:
+  image: registry.example.internal/approved/python:3
+  tags: [replace-with-a-runner-tag]
+  id_tokens:
+    AI_ID_TOKEN:
+      aud: https://sts.example.internal
+  variables:
+    PROBE_AUD: https://sts.example.internal
+    # name=url list. Connect only: nothing is sent except a plain GET.
+    PROBE_REACH: "registry=https://registry.example.internal/v2/"
+    # Leave empty until the hardened runner exists (expected to be unreachable).
+    PROBE_BLOCKED: ""
+    # true shows user details in the job log, for the attribution test only.
+    PROBE_SHOW_VALUES: "false"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "trigger"
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - python3 phase0_probe.py
