@@ -37,8 +37,9 @@ func main() {
 		IdleConnTimeout:       90 * time.Second,
 	}
 	jwksClient := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
+		Timeout:       10 * time.Second,
+		CheckRedirect: harden.NoRedirect,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
 	}
 	jwksURL := os.Getenv("GATEWAY_STS_JWKS_URL")
 	if err := harden.RequireHTTPS(jwksURL); err != nil {

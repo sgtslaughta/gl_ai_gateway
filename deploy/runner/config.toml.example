@@ -20,7 +20,7 @@ concurrent = 2          # pilot: low
     allowed_pull_policies = ["always"]
     allowed_users = ["10001"]   # matches image/Dockerfile user
     pull_policy = ["always"]
-    helper_image = "registry.example.internal/ai-hardened/gitlab-runner-helper:17.0.0"  # mirror; semver tag
+    helper_image = "registry.example.internal/ai-hardened/gitlab-runner-helper:x86_64-vRUNNER_VERSION"  # mirror; REPLACE RUNNER_VERSION with the exact runner version (helper must match)
     cpu_limit = "2"
     memory_limit = "4Gi"
 
@@ -30,6 +30,9 @@ concurrent = 2          # pilot: low
     [runners.kubernetes.node_tolerations]
       "example.internal/pool=ai-runners" = "NoSchedule"
 
+    # Option names confirmed against GitLab Runner Kubernetes executor docs.
+    # Pod-level seccomp_profile is supported (needs Kubernetes 1.19+), so PSA
+    # restricted is met without falling back to baseline.
     # Namespace enforces PSA restricted, so containers must comply.
     [runners.kubernetes.pod_security_context]
       run_as_non_root = true
@@ -42,7 +45,8 @@ concurrent = 2          # pilot: low
     [runners.kubernetes.build_container_security_context]
       run_as_user = 10001
       run_as_group = 10001
-      # Try read_only_root_filesystem = true in the pilot (spec 8.2); HOME is the emptyDir below.
+      # Docs list no read-only-rootfs option for these contexts, so it is not set.
+      # If the pilot needs it, enforce via admission policy instead.
       [runners.kubernetes.build_container_security_context.capabilities]
         drop = ["ALL"]
 
@@ -50,6 +54,13 @@ concurrent = 2          # pilot: low
       run_as_user = 10001
       run_as_group = 10001
       [runners.kubernetes.helper_container_security_context.capabilities]
+        drop = ["ALL"]
+
+    # Jobs using `services:` need this too, or PSA restricted rejects the pod.
+    [runners.kubernetes.service_container_security_context]
+      run_as_user = 10001
+      run_as_group = 10001
+      [runners.kubernetes.service_container_security_context.capabilities]
         drop = ["ALL"]
 
     # image/Dockerfile sets HOME=/home/ai; give it a writable ephemeral volume.

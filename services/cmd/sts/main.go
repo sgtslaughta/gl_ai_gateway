@@ -36,8 +36,9 @@ func main() {
 		log.Fatal(err)
 	}
 	jwksClient := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
+		Timeout:       10 * time.Second,
+		CheckRedirect: harden.NoRedirect,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}},
 	}
 	verifiers := map[string]*token.Verifier{}
 	for _, i := range cfg.Issuers {

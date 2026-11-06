@@ -2,6 +2,7 @@ package harden
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"syscall"
 	"testing"
 )
@@ -33,5 +34,24 @@ func TestLoadPoolAndServeTLSRequired(t *testing.T) {
 	}
 	if err := ServeTLS(&http.Server{}, "", ""); err == nil {
 		t.Fatal("missing cert accepted")
+	}
+}
+
+func TestNoRedirect(t *testing.T) {
+	var hits int
+	dst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer dst.Close()
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dst.URL, http.StatusFound)
+	}))
+	defer src.Close()
+	c := &http.Client{CheckRedirect: NoRedirect}
+	resp, err := c.Get(src.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if hits != 0 || resp.StatusCode != http.StatusFound {
+		t.Fatalf("redirect followed: hits=%d status=%d", hits, resp.StatusCode)
 	}
 }

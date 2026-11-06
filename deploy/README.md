@@ -10,7 +10,7 @@ For release pass approved digests: `--build-arg GO_IMAGE=...@sha256:... --build-
 ## Secrets (create out of band, never in the repo)
 - sts-signing-keys (current.pem, next.pem), sts-directory-bind (bind-password), sts-tls, sts-ca
 - gateway-client-cert (tls.crt, tls.key), gateway-ca, gateway-tls
-- ai-services-tls (ingress)
+- ai-services-tls (ingress front cert), ingress-backend-ca (ca.crt; the CA that signed sts-tls and gateway-tls, used by nginx proxy-ssl-verify; may also need a client tls.crt/tls.key pair)
 Serving certs need SANs for `<svc>.ai-services.svc` and the `*.example.internal` host. `gateway-ca` must trust the STS serving cert; `sts-ca` must trust GitLab and the LDAP server.
 
 ## Required env vars
@@ -19,4 +19,4 @@ Serving certs need SANs for `<svc>.ai-services.svc` and the `*.example.internal`
 Startup fails if TLS files are missing or a JWKS URL is not https.
 
 ## Replace before deploy
-`*.example.internal` hosts, 192.0.2.x CIDRs, ingress namespace/class/pod label, `@sha256:REPLACE_WITH_DIGEST` image digests, `runner_ids`, runner token and helper image tag, node selector/tolerations in `runner/config.toml.example`.
+`*.example.internal` hosts, 192.0.2.x CIDRs, ingress namespace/class/pod label, `@sha256:REPLACE_WITH_DIGEST` image digests, `runner_ids`, runner token and helper image tag (`x86_64-vRUNNER_VERSION`, must match the runner version), node selector/tolerations in `runner/config.toml.example`.

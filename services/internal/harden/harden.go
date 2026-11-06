@@ -46,3 +46,9 @@ func ServeTLS(srv *http.Server, certFile, keyFile string) error {
 	srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return srv.ListenAndServeTLS(certFile, keyFile)
 }
+
+// NoRedirect is an http.Client CheckRedirect that refuses every redirect,
+// so an https JWKS URL cannot be bounced to http.
+func NoRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}

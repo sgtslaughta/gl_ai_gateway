@@ -1,16 +1,44 @@
-# TLS terminates here and is re-encrypted to the services (they serve TLS only).
-# TLS secret "ai-services-tls" is created out of band.
-# Backend certificates are not verified by default; to verify, add the
-# proxy-ssl-verify annotations with the internal CA.
+# TLS terminates here and is re-encrypted to the services (they serve TLS only),
+# verifying each backend certificate against the internal CA.
+# Secrets (out of band): ai-services-tls (front cert, both hosts) and
+# ai-services/ingress-backend-ca (key ca.crt) in the same namespace.
+# proxy-ssl-secret format is <namespace>/<name>; ingress-nginx requires ca.crt
+# (and may require tls.crt/tls.key in that secret; add a client pair if so).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ai-services
+  name: sts
   namespace: ai-services
   annotations:
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: ai-services/ingress-backend-ca
+    nginx.ingress.kubernetes.io/proxy-ssl-name: sts.ai-services.svc
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-body-size: 64k
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [sts.example.internal]
+      secretName: ai-services-tls
+  rules:
+    - host: sts.example.internal
+      http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sts, port: {number: 8080}}}}]}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: ai-services
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: ai-services/ingress-backend-ca
+    nginx.ingress.kubernetes.io/proxy-ssl-name: gateway.ai-services.svc
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
     # Gateway limits: 10 MiB body cap, long streams, no buffering.
-    # (Applies to the whole Ingress; STS requests are tiny so this is harmless.)
     nginx.ingress.kubernetes.io/proxy-body-size: 10m
     nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
@@ -18,10 +46,8 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: [sts.example.internal, gateway.example.internal]
+    - hosts: [gateway.example.internal]
       secretName: ai-services-tls
   rules:
-    - host: sts.example.internal
-      http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: sts, port: {number: 8080}}}}]}
     - host: gateway.example.internal
       http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: gateway, port: {number: 8080}}}}]}
