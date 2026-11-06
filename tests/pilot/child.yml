@@ -1,0 +1,15 @@
+# Child pipeline for the pilot. On an unprotected ref the token must be denied.
+include:
+  - project: platform/ai-ci-templates
+    ref: v1.0.0
+    file: templates/ai-access.yml
+
+child-expect-no-token:
+  extends: .ai-access
+  before_script: []
+  script:
+    - |
+      if (. ai-token) 2>err.txt; then
+        echo "FAIL: a token was issued"; exit 1
+      fi
+      cat err.txt; echo "PASS"
