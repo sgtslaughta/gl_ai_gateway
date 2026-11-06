@@ -52,13 +52,30 @@ func RouteAllowed(method, escapedPath string) bool {
 	return allowedRoutes[method+" "+escapedPath]
 }
 
-// RewriteHeaders strips client credentials and identity headers, then sets
-// identity from the verified token claims.
+var allowedExact = map[string]bool{
+	"content-type": true, "accept": true, "accept-encoding": true, "user-agent": true, "idempotency-key": true,
+}
+
+var allowedPrefix = []string{"anthropic-", "openai-", "x-stainless-"}
+
+func forwardable(name string) bool {
+	l := strings.ToLower(name)
+	if allowedExact[l] {
+		return true
+	}
+	for _, p := range allowedPrefix {
+		if strings.HasPrefix(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// RewriteHeaders drops every client header not on the forwarding allowlist,
+// then sets identity from the verified token claims.
 func RewriteHeaders(h http.Header, c token.Claims) {
 	for k := range h {
-		l := strings.ToLower(k)
-		if l == "authorization" || l == "x-api-key" || l == "api-key" || l == "x-proxied-entity" ||
-			strings.HasPrefix(l, "x-litellm-") || strings.HasPrefix(l, "x-ci-") {
+		if !forwardable(k) {
 			delete(h, k)
 		}
 	}

@@ -8,11 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"ai-access/internal/harden"
 	"ai-access/internal/sts"
 	"ai-access/internal/token"
 )
 
 func main() {
+	if err := harden.DisableCoreDumps(); err != nil {
+		log.Fatal(err)
+	}
 	cfgPath := os.Getenv("STS_CONFIG")
 	cfg, err := sts.LoadConfig(cfgPath)
 	if err != nil {

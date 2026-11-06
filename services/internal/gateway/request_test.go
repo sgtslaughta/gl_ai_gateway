@@ -62,7 +62,7 @@ func TestRewriteHeaders(t *testing.T) {
 	for k, v := range map[string]string{
 		"X-Proxied-Entity": "cn=evil", "Authorization": "Bearer t", "x-api-key": "t", "api-key": "t",
 		"x-litellm-api-key": "t", "x-litellm-spend-logs-metadata": `{"job_id":"evil"}`,
-		"x-litellm-other": "z", "X-CI-Job": "evil", "X-CI-Extra": "e", "anthropic-version": "2023-06-01",
+		"x-litellm-other": "z", "X-CI-Job": "evil", "X-CI-Extra": "e", "Cookie": "c=1", "x-goog-api-key": "g", "X-Remote-User": "r", "X_Proxied_Entity": "u", "X-Forwarded-User": "f", "Upgrade": "websocket", "Content-Type": "application/json", "anthropic-version": "2023-06-01",
 	} {
 		h.Set(k, v)
 	}
@@ -70,10 +70,13 @@ func TestRewriteHeaders(t *testing.T) {
 	if got := h.Values("X-Proxied-Entity"); len(got) != 1 || got[0] != "cn=alice" {
 		t.Fatal(got)
 	}
-	for _, k := range []string{"Authorization", "x-api-key", "api-key", "x-litellm-api-key", "x-litellm-other", "X-CI-Extra"} {
+	for _, k := range []string{"Authorization", "x-api-key", "api-key", "x-litellm-api-key", "x-litellm-other", "X-CI-Extra", "Cookie", "x-goog-api-key", "X-Remote-User", "X_Proxied_Entity", "X-Forwarded-User", "Upgrade"} {
 		if h.Get(k) != "" {
 			t.Errorf("%s survived", k)
 		}
+	}
+	if h.Get("Content-Type") != "application/json" {
+		t.Error("content-type dropped")
 	}
 	if h.Get("anthropic-version") != "2023-06-01" {
 		t.Error("anthropic-version dropped")

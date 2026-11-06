@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ai-access/internal/gateway"
+	"ai-access/internal/harden"
 	"ai-access/internal/token"
 )
 
@@ -21,6 +22,7 @@ func must(err error) {
 }
 
 func main() {
+	must(harden.DisableCoreDumps())
 	pool := x509.NewCertPool()
 	ca, err := os.ReadFile(os.Getenv("GATEWAY_CA_FILE"))
 	must(err)
@@ -48,9 +50,11 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
+	h, err := gateway.NewHandler(cfg, v, transport, os.Stdout)
+	must(err)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           gateway.NewHandler(cfg, v, transport, os.Stdout),
+		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

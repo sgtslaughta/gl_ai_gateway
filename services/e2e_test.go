@@ -58,7 +58,7 @@ func newStack(t *testing.T) *stack {
 	s := &stack{seen: make(chan http.Header, 8), signer: signer}
 	s.sts = httptest.NewServer(sts.NewHandler(cfg,
 		map[string]*token.Verifier{glIssuer: token.NewVerifier(glJWKS.URL, glIssuer, "sts", nil)}, signer, lookup, &bytes.Buffer{}))
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.seen <- r.Header.Clone()
 		io.Copy(io.Discard, r.Body)
 		if strings.Contains(r.Header.Get("Accept"), "event-stream") {
@@ -73,7 +73,11 @@ func newStack(t *testing.T) *stack {
 		w.Write([]byte(`{"ok":true}`))
 	}))
 	v := token.NewVerifier(s.sts.URL+"/.well-known/jwks.json", "https://sts.example.internal", "gateway", nil)
-	s.gw = httptest.NewServer(gateway.NewHandler(gateway.Config{UpstreamURL: up.URL, BatchServiceURL: "https://batch.example.internal"}, v, nil, &bytes.Buffer{}))
+	gh, err := gateway.NewHandler(gateway.Config{UpstreamURL: up.URL, BatchServiceURL: "https://batch.example.internal"}, v, up.Client().Transport, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.gw = httptest.NewServer(gh)
 	t.Cleanup(func() { s.gw.Close(); s.sts.Close(); up.Close(); glJWKS.Close() })
 	s.idToken = func(aud string) string {
 		tk := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{

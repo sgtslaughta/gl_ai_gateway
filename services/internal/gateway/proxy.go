@@ -55,19 +55,20 @@ type handler struct {
 	audit    io.Writer
 }
 
-// NewHandler builds the gateway handler. Config.UpstreamURL must be valid.
-func NewHandler(cfg Config, v *token.Verifier, transport http.RoundTripper, audit io.Writer) http.Handler {
+// NewHandler builds the gateway handler. The upstream must be a valid https
+// URL and transport must be set (it carries the mTLS client certificate).
+func NewHandler(cfg Config, v *token.Verifier, transport http.RoundTripper, audit io.Writer) (http.Handler, error) {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 	if transport == nil {
-		transport = http.DefaultTransport
+		return nil, errors.New("gateway: transport is required")
 	}
 	u, err := url.Parse(cfg.UpstreamURL)
-	if err != nil {
-		u = &url.URL{} // requests fail with 502
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return nil, errors.New("gateway: upstream URL must be a valid https URL")
 	}
-	return &handler{cfg: cfg, upstream: u, v: v, tr: transport, audit: audit}
+	return &handler{cfg: cfg, upstream: u, v: v, tr: transport, audit: audit}, nil
 }
 
 // countBody counts bytes read from a request body.
@@ -133,6 +134,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec.User, rec.DN, rec.Project, rec.Ref, rec.SHA = c.UserLogin, c.DN, c.ProjectPath, c.Ref, c.SHA
 	rec.Pipeline, rec.Job, rec.Runner = c.PipelineID, c.JobID, c.RunnerID
 
+	if r.Header.Get("Upgrade") != "" {
+		http.Error(cw, "upgrade not supported", http.StatusBadRequest)
+		return
+	}
 	if !RouteAllowed(r.Method, r.URL.EscapedPath()) {
 		http.Error(cw, fmt.Sprintf("route not allowed; batch and other endpoints are served by %s", h.cfg.BatchServiceURL), http.StatusForbidden)
 		return

@@ -60,8 +60,12 @@ func (f *fixture) token(t *testing.T, mod func(*token.Claims)) string {
 	return s
 }
 
-func (f *fixture) handler(up string, audit io.Writer) http.Handler {
-	return NewHandler(Config{UpstreamURL: up, MaxBodyBytes: 1024, BatchServiceURL: "https://batch.example.internal"}, f.ver, nil, audit)
+func (f *fixture) handler(up *httptest.Server, audit io.Writer) http.Handler {
+	h, err := NewHandler(Config{UpstreamURL: up.URL, MaxBodyBytes: 1024, BatchServiceURL: "https://batch.example.internal"}, f.ver, up.Client().Transport, audit)
+	if err != nil {
+		panic(err)
+	}
+	return h
 }
 
 func do(h http.Handler, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
@@ -78,7 +82,7 @@ func TestValidRequestsReachUpstream(t *testing.T) {
 	f := newFixture(t)
 	var mu sync.Mutex
 	var gotEntity, gotBody, gotAuth string
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		gotEntity, gotBody, gotAuth = r.Header.Get("X-Proxied-Entity"), string(b), r.Header.Get("Authorization")+r.Header.Get("x-api-key")
@@ -86,7 +90,7 @@ func TestValidRequestsReachUpstream(t *testing.T) {
 		w.Write([]byte("ok"))
 	}))
 	defer up.Close()
-	h := f.handler(up.URL, &bytes.Buffer{})
+	h := f.handler(up, &bytes.Buffer{})
 	tok := f.token(t, nil)
 	for _, hdr := range []map[string]string{{"Authorization": "Bearer " + tok}, {"x-api-key": tok}} {
 		w := do(h, "POST", "/v1/chat/completions", `{"a":1}`, hdr)
@@ -102,9 +106,9 @@ func TestRejections(t *testing.T) {
 	f := newFixture(t)
 	hits := 0
 	var mu sync.Mutex
-	up := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { mu.Lock(); hits++; mu.Unlock() }))
+	up := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { mu.Lock(); hits++; mu.Unlock() }))
 	defer up.Close()
-	h := f.handler(up.URL, &bytes.Buffer{})
+	h := f.handler(up, &bytes.Buffer{})
 	good := map[string]string{"Authorization": "Bearer " + f.token(t, nil)}
 	other := f.token(t, func(c *token.Claims) { c.Audience = jwt.ClaimStrings{"other"} })
 	cases := []struct {
@@ -142,9 +146,9 @@ func TestRejections(t *testing.T) {
 
 func TestChunkedOverLimit(t *testing.T) {
 	f := newFixture(t)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body) }))
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body) }))
 	defer up.Close()
-	h := f.handler(up.URL, &bytes.Buffer{})
+	h := f.handler(up, &bytes.Buffer{})
 	r := httptest.NewRequest("POST", "/v1/messages", io.MultiReader(strings.NewReader(strings.Repeat("a", 2000))))
 	r.ContentLength = -1
 	r.Header.Set("Authorization", "Bearer "+f.token(t, nil))
@@ -160,7 +164,7 @@ func bearer(t string) map[string]string { return map[string]string{"Authorizatio
 func TestStreamingUnbuffered(t *testing.T) {
 	f := newFixture(t)
 	release := make(chan struct{})
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte("data: one\n\n"))
 		w.(http.Flusher).Flush()
@@ -168,7 +172,7 @@ func TestStreamingUnbuffered(t *testing.T) {
 	}))
 	defer up.Close()
 	defer close(release)
-	gw := httptest.NewServer(f.handler(up.URL, &bytes.Buffer{}))
+	gw := httptest.NewServer(f.handler(up, &bytes.Buffer{}))
 	defer gw.Close()
 	req, _ := http.NewRequest("POST", gw.URL+"/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer "+f.token(t, nil))
@@ -196,7 +200,7 @@ func TestStreamingUnbuffered(t *testing.T) {
 func TestClientDisconnectCancelsUpstream(t *testing.T) {
 	f := newFixture(t)
 	started, cancelled := make(chan struct{}), make(chan struct{})
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("x"))
 		w.(http.Flusher).Flush()
 		close(started)
@@ -204,7 +208,7 @@ func TestClientDisconnectCancelsUpstream(t *testing.T) {
 		close(cancelled)
 	}))
 	defer up.Close()
-	gw := httptest.NewServer(f.handler(up.URL, &bytes.Buffer{}))
+	gw := httptest.NewServer(f.handler(up, &bytes.Buffer{}))
 	defer gw.Close()
 	req, _ := http.NewRequest("POST", gw.URL+"/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer "+f.token(t, nil))
@@ -223,7 +227,7 @@ func TestClientDisconnectCancelsUpstream(t *testing.T) {
 
 func TestAuditMetadataOnly(t *testing.T) {
 	f := newFixture(t)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		w.Header().Set("x-litellm-call-id", "call-123")
 		w.Write([]byte("SECRET-PROMPT reply"))
@@ -231,7 +235,7 @@ func TestAuditMetadataOnly(t *testing.T) {
 	defer up.Close()
 	var buf bytes.Buffer
 	tok := f.token(t, nil)
-	w := do(f.handler(up.URL, &buf), "POST", "/v1/messages", "SECRET-PROMPT body", bearer(tok))
+	w := do(f.handler(up, &buf), "POST", "/v1/messages", "SECRET-PROMPT body", bearer(tok))
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
@@ -260,11 +264,79 @@ func TestAuditMetadataOnly(t *testing.T) {
 
 func TestUpstreamErrorHidesDetails(t *testing.T) {
 	f := newFixture(t)
-	up := httptest.NewServer(http.NotFoundHandler())
-	url := up.URL
+	up := httptest.NewTLSServer(http.NotFoundHandler())
+	h := f.handler(up, &bytes.Buffer{})
 	up.Close()
-	w := do(f.handler(url, &bytes.Buffer{}), "POST", "/v1/messages", "{}", bearer(f.token(t, nil)))
+	w := do(h, "POST", "/v1/messages", "{}", bearer(f.token(t, nil)))
 	if w.Code != 502 || strings.Contains(w.Body.String(), "127.0.0.1") || strings.Contains(w.Body.String(), "refused") {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestNewHandlerValidation(t *testing.T) {
+	f := newFixture(t)
+	tr := http.DefaultTransport
+	for name, c := range map[string]struct {
+		url string
+		tr  http.RoundTripper
+	}{
+		"empty": {"", tr}, "http": {"http://up.example.internal", tr}, "unparseable": {"https://%zz", tr},
+		"nohost": {"https://", tr}, "nil transport": {"https://up.example.internal", nil},
+	} {
+		if h, err := NewHandler(Config{UpstreamURL: c.url}, f.ver, c.tr, nil); err == nil || h != nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if _, err := NewHandler(Config{UpstreamURL: "https://up.example.internal"}, f.ver, tr, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpgradeRejected(t *testing.T) {
+	f := newFixture(t)
+	hit := false
+	up := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }))
+	defer up.Close()
+	hdr := bearer(f.token(t, nil))
+	hdr["Upgrade"] = "websocket"
+	hdr["Connection"] = "Upgrade"
+	if w := do(f.handler(up, &bytes.Buffer{}), "POST", "/v1/messages", "{}", hdr); w.Code != 400 || hit {
+		t.Fatal(w.Code, hit)
+	}
+}
+
+func TestSpoofedHeadersRewritten(t *testing.T) {
+	f := newFixture(t)
+	got := make(chan http.Header, 1)
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.Header.Clone() }))
+	defer up.Close()
+	hdr := bearer(f.token(t, nil))
+	for k, v := range map[string]string{
+		"X-Proxied-Entity": "cn=evil", "Connection": "X-Proxied-Entity", "x-litellm-api-key": "evil",
+		"x-litellm-spend-logs-metadata": `{"job_id":"evil"}`, "X-CI-Job": "evil", "X-CI-Extra": "evil",
+		"X_Proxied_Entity": "cn=evil", "Cookie": "s=1",
+	} {
+		hdr[k] = v
+	}
+	if w := do(f.handler(up, &bytes.Buffer{}), "POST", "/v1/messages", "{}", hdr); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	h := <-got
+	if v := h.Values("X-Proxied-Entity"); len(v) != 1 || v[0] != "cn=alice,dc=example,dc=internal" {
+		t.Fatal(v)
+	}
+	if h.Get("x-litellm-api-key") != "" || h.Get("X-CI-Extra") != "" || h.Get("X-CI-Job") != "200" || h.Get("Cookie") != "" ||
+		h.Get("X_Proxied_Entity") != "" || !strings.Contains(h.Get("x-litellm-spend-logs-metadata"), `"job_id":"200"`) {
+		t.Fatal(h)
+	}
+}
+
+func TestEncodedPathDenied(t *testing.T) {
+	f := newFixture(t)
+	hit := false
+	up := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }))
+	defer up.Close()
+	if w := do(f.handler(up, &bytes.Buffer{}), "GET", "/v1/%6dodels", "", bearer(f.token(t, nil))); w.Code != 403 || hit {
+		t.Fatal(w.Code, hit)
 	}
 }
