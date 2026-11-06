@@ -28,7 +28,13 @@ type Claims struct {
 	RunnerID    int64  `json:"runner_id"`
 }
 
-const refreshInterval = time.Minute
+const (
+	successInterval  = time.Minute
+	failureInterval  = 5 * time.Second
+	fetchTimeout     = 10 * time.Second
+	jwksRefreshAfter = 10 * time.Minute
+	jwksMaxStale     = 24 * time.Hour
+)
 
 // Verifier verifies RS256 JWTs against a remote JWKS.
 type Verifier struct {
@@ -36,11 +42,13 @@ type Verifier struct {
 	client *http.Client
 	parser *jwt.Parser
 
-	mu   sync.RWMutex // guards keys only; never held across HTTP
-	keys map[string]*rsa.PublicKey
+	mu     sync.RWMutex // guards keys, lastOK; never held across HTTP
+	keys   map[string]*rsa.PublicKey
+	lastOK time.Time // last successful fetch
 
-	fetchMu sync.Mutex // serializes refreshes; guards lastTry
-	lastTry time.Time
+	fetchMu sync.Mutex // serializes refreshes; guards nextTry
+	nextTry time.Time
+	aud     string
 	now     func() time.Time
 }
 
@@ -51,6 +59,7 @@ func NewVerifier(jwksURL, issuer, audience string, client *http.Client) *Verifie
 	}
 	return &Verifier{
 		url:    jwksURL,
+		aud:    audience,
 		client: client,
 		keys:   map[string]*rsa.PublicKey{},
 		now:    time.Now,
@@ -75,6 +84,10 @@ func (v *Verifier) Verify(ctx context.Context, raw string, into jwt.Claims) erro
 	})
 	if err != nil {
 		return fmt.Errorf("token invalid: %s", sanitize(err))
+	}
+	// Require exactly one audience, equal to ours.
+	if aud, err := into.GetAudience(); err != nil || len(aud) != 1 || aud[0] != v.aud {
+		return errors.New("token invalid: bad audience")
 	}
 	return nil
 }
@@ -102,16 +115,36 @@ func sanitize(err error) string {
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+	if age, ok := v.keyAge(); ok && age > jwksRefreshAfter {
+		// Failure keeps the cache unless it is too old to trust.
+		err := v.refresh(ctx, func() bool {
+			a, ok := v.keyAge()
+			return ok && a <= jwksRefreshAfter
+		})
+		if a, _ := v.keyAge(); err != nil && a > jwksMaxStale {
+			return nil, errors.New("jwks too stale")
+		}
+	}
 	if k, ok := v.lookup(kid); ok {
 		return k, nil
 	}
-	if err := v.refresh(ctx, kid); err != nil {
+	if err := v.refresh(ctx, func() bool { _, ok := v.lookup(kid); return ok }); err != nil {
 		return nil, err
 	}
 	if k, ok := v.lookup(kid); ok {
 		return k, nil
 	}
 	return nil, errors.New("unknown kid")
+}
+
+// keyAge is the time since the last successful fetch; ok is false if none.
+func (v *Verifier) keyAge() (time.Duration, bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.lastOK.IsZero() {
+		return 0, false
+	}
+	return v.now().Sub(v.lastOK), true
 }
 
 func (v *Verifier) lookup(kid string) (*rsa.PublicKey, bool) {
@@ -121,34 +154,50 @@ func (v *Verifier) lookup(kid string) (*rsa.PublicKey, bool) {
 	return k, ok
 }
 
-// refresh fetches the JWKS, at most once per refreshInterval. Cached keys
-// are kept when a fetch fails.
-func (v *Verifier) refresh(ctx context.Context, kid string) error {
+// refresh fetches the JWKS unless satisfied() already holds once the fetch
+// lock is acquired. Attempts are spaced by successInterval after a success
+// and failureInterval after a failure. Cached keys survive failures.
+func (v *Verifier) refresh(ctx context.Context, satisfied func() bool) error {
 	v.fetchMu.Lock()
 	defer v.fetchMu.Unlock()
-	// A concurrent refresh may have just loaded the key.
-	if _, ok := v.lookup(kid); ok {
+	if satisfied() {
 		return nil
 	}
-	if !v.lastTry.IsZero() && v.now().Sub(v.lastTry) < refreshInterval {
+	if v.now().Before(v.nextTry) {
 		return errors.New("jwks refresh rate limited")
 	}
-	v.lastTry = v.now()
+	keys, err := v.fetch(ctx)
+	if err != nil {
+		v.nextTry = v.now().Add(failureInterval)
+		return err
+	}
+	v.nextTry = v.now().Add(successInterval)
+	v.mu.Lock()
+	v.keys, v.lastOK = keys, v.now()
+	v.mu.Unlock()
+	return nil
+}
+
+// fetch runs detached from the caller's cancellation so a client cannot
+// abort a refresh and burn the rate limit.
+func (v *Verifier) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.url, nil)
 	if err != nil {
-		return errors.New("jwks request failed")
+		return nil, errors.New("jwks request failed")
 	}
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return errors.New("jwks fetch failed")
+		return nil, errors.New("jwks fetch failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("jwks fetch status %d", resp.StatusCode)
+		return nil, fmt.Errorf("jwks fetch status %d", resp.StatusCode)
 	}
 	var set jwks
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&set); err != nil {
-		return errors.New("jwks decode failed")
+		return nil, errors.New("jwks decode failed")
 	}
 	keys := map[string]*rsa.PublicKey{}
 	for _, j := range set.Keys {
@@ -156,8 +205,8 @@ func (v *Verifier) refresh(ctx context.Context, kid string) error {
 			keys[j.Kid] = pk
 		}
 	}
-	v.mu.Lock()
-	v.keys = keys
-	v.mu.Unlock()
-	return nil
+	if len(keys) == 0 {
+		return nil, errors.New("jwks has no valid keys")
+	}
+	return keys, nil
 }

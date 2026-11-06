@@ -156,7 +156,7 @@ func TestUnknownKidRefreshesOnce(t *testing.T) {
 	p, _ := writeKey(t, t.TempDir(), "b.pem")
 	e.s, _ = NewSigner([]string{p}, iss)
 	now := time.Now()
-	e.v.now = func() time.Time { return now.Add(2 * refreshInterval) }
+	e.v.now = func() time.Time { return now.Add(2 * successInterval) }
 	fresh, _ := e.s.Sign(goodClaims())
 	if err := e.v.Verify(context.Background(), fresh, &Claims{}); err != nil {
 		t.Fatal(err)
