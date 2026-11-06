@@ -27,7 +27,8 @@ LIFETIME_TOLERANCE_SECONDS = 600
 TIMEOUT_SECONDS = 5
 
 REQUIRED_CLAIMS = ("iss", "aud", "exp", "iat", "user_login", "runner_id", "pipeline_source",
-                   "ref_protected", "project_path", "sha", "pipeline_id", "job_id", "user_id")
+                   "ref_protected", "project_path", "sha", "pipeline_id", "job_id", "user_id",
+                   "job_project_path")
 OPTIONAL_CLAIMS = ("ref", "ci_config_ref_uri",
                    "runner_environment", "user_access_level")
 # ponytail: allowlist, so a new GitLab claim stays masked by default.

@@ -38,6 +38,7 @@ def good_claims(**overrides):
             {"provider": "ldapmain", "extern_uid": "cn=Alice Secret,ou=people,dc=example"}
         ],
         "project_path": "g/p",
+        "job_project_path": "g/p",
         "ref": "main",
         "ref_protected": "true",
         "sha": "abc",

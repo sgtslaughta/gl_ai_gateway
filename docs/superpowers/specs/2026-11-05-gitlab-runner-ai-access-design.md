@@ -87,14 +87,15 @@ GitLab trust is one relationship: an allowlisted issuer URL, its signing keys (J
 2. `aud` is exactly the STS audience. `exp` and `nbf` valid.
 3. `runner_id` is in the configured AI runner list.
 4. `ref_protected` must be true unless `pipeline_source` is `push`, `web` or `merge_request_event`. Any other source, including `schedule`, `trigger`, `pipeline`, `parent_pipeline` and `api`, or an unknown or empty one, needs a protected ref. Without this, someone who can push to an unprotected branch could run code as a schedule or trigger owner, or reach it through a child pipeline (designer's call, tightens the owner's schedule-only rule).
-5. User maps to a real directory entry.
+5. `job_project_path` is present and equals `project_path`. GitLab's `project_path` is an MR's source project, so a difference means fork code running in the parent project, under the identity of whoever started it (designer's call).
+6. User maps to a real directory entry.
 
 **Identity mapping:** users sign in to GitLab through the same directory as their certificates. STS looks up the signed `user_email` in the directory and uses the DN the directory returns. Exactly one entry must match. No match or several means deny, with no fallback identity. STS doesn't use `user_identities`, because that claim needs an opt-in preference from each user (owner's decision, 2026-11-06). Bot users (project and group access tokens) therefore fail to map and are denied.
 
 **Issued token:**
 - `aud`: the gateway only.
 - Lifetime: at most 30 minutes, and never beyond the ID token's `exp`.
-- Claims: DN, `user_login`, `project_path`, `ref`, `sha`, `pipeline_id`, `job_id`, `runner_id`.
+- Claims: DN, `user_login`, `project_path`, `job_project_path`, `ref`, `sha`, `pipeline_id`, `job_id`, `runner_id`.
 
 **Runner list** is config, not code, and rolls out without downtime. List old and new runner IDs together during cutover, then remove the old ones **(designer's call)**.
 

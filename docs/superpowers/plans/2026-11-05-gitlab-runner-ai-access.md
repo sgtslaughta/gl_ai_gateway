@@ -133,7 +133,7 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 
 - [ ] **Step 1: Write failing policy tests**
 
-`CheckPolicy` returns an error for a `runner_id` not in `RunnerIDs`, and for `ref_protected != "true"` unless `pipeline_source` is `push`, `web` or `merge_request_event` (including `schedule`, `trigger`, `pipeline`, `parent_pipeline`, `api` and empty). It passes for a listed runner on a push, and for a schedule on a protected ref.
+`CheckPolicy` returns an error for a `runner_id` not in `RunnerIDs`, and for `ref_protected != "true"` unless `pipeline_source` is `push`, `web` or `merge_request_event` (including `schedule`, `trigger`, `pipeline`, `parent_pipeline`, `api` and empty), and when `job_project_path` is empty or differs from `project_path`. It passes for a listed runner on a push, and for a schedule on a protected ref.
 
 - [ ] **Step 2: Write failing mapping tests**
 
@@ -151,7 +151,7 @@ git add services && git commit -m "feat(token): add JWT verifier and signer"
 - `exp` is `min(now+TokenTTL, idToken.exp)`, including a case where the ID token expires in 5 minutes.
 - `TokenTTL` above 30 minutes is rejected at config load.
 - Wrong `grant_type` or `subject_token_type` returns 400.
-- Invalid token returns 401. Policy or mapping denial returns 403 with a short reason code such as `runner_not_allowed`, `ref_not_protected` or `identity_not_mapped`.
+- Invalid token returns 401. Policy or mapping denial returns 403 with a short reason code such as `runner_not_allowed`, `ref_not_protected`, `fork_pipeline_denied` or `identity_not_mapped`.
 - Log output and responses never contain the subject token.
 - Each decision writes one JSON audit line: user, `user_id`, DN, project, ref, SHA, pipeline, job, runner, status, reason.
 
