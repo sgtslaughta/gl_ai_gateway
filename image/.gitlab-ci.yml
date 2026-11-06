@@ -3,15 +3,22 @@
 # CI/CD variables. SBOM, scanner and signing tools vary by network: set
 # SBOM_CMD, SCAN_CMD and SIGN_CMD to the approved tools, or leave SIGN_CMD empty.
 # Not yet run against a real registry (deferred to the owner's network).
+# This file is not in the repo root. Set the image project's CI/CD setting
+# "CI/CD configuration file" to image/.gitlab-ci.yml (the root .gitlab-ci.yml
+# only runs the unit tests).
 #
 # Gate: candidates are pushed to STAGING_REPO, which is OUTSIDE ai-hardened/
 # (allowed_images is ai-hardened/*). Only the release job writes to ai-hardened/,
 # and it promotes the exact scanned digest, never a mutable tag.
 #
 # Credentials (masked CI variables, least privilege, one pair per job class):
-#   build        STAGING_REGISTRY_USER / STAGING_REGISTRY_PASSWORD  push to the staging repo only
-#   sbom, scan   PULL_REGISTRY_USER / PULL_REGISTRY_PASSWORD        pull-only
-#   release      RELEASE_REGISTRY_USER / RELEASE_REGISTRY_PASSWORD  push to ai-hardened/ only
+#   build        STAGING_REGISTRY_USER / STAGING_REGISTRY_PASSWORD  push to the staging repo, pull the base image
+#   sbom, scan   PULL_REGISTRY_USER / PULL_REGISTRY_PASSWORD        pull-only (staging)
+#   release      RELEASE_REGISTRY_USER / RELEASE_REGISTRY_PASSWORD  pull from staging and the helper source,
+#                                                                  push to ai-hardened/
+# Internal CA: the build job copies the file-type variable INTERNAL_CA_FILE into
+# image/ca/ and fails if it is unset. If BASE_IMAGE already trusts the internal
+# CA, set SKIP_INTERNAL_CA=true (protected project variable) to opt out.
 # Scope the RELEASE_* variables to the 'release' environment and restrict that
 # environment to a protected environment, so no other job can read them.
 #
@@ -36,7 +43,7 @@ variables:
   DOCKER_TLS_VERIFY: "1"
   RUNNER_HELPER_SRC: registry.example.internal/mirror/gitlab-runner-helper:CHANGE_ME
   RUNNER_HELPER_DST: registry.example.internal/ai-hardened/gitlab-runner-helper
-  RUNNER_HELPER_VERSION: CHANGE_ME   # semver tag of the helper being mirrored
+  RUNNER_HELPER_VERSION: CHANGE_ME   # helper tag being mirrored, e.g. x86_64-v17.11.0 (matches helper_image in the runner config)
   SBOM_CMD: ""                       # e.g. 'syft "$CANDIDATE_REF" -o cyclonedx-json > sbom.json'
   SCAN_CMD: ""                       # must exit non-zero at the agreed severity threshold
   SIGN_CMD: ""                       # optional, e.g. 'cosign sign --key ... "$IMAGE_REF"'
@@ -70,6 +77,14 @@ build:
   before_script:
     - printf '%s' "$STAGING_REGISTRY_PASSWORD" | docker login -u "$STAGING_REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
+    - |
+      if [ "${SKIP_INTERNAL_CA:-}" = true ]; then
+        echo "SKIP_INTERNAL_CA=true: relying on the base image CA store"
+      elif [ -n "${INTERNAL_CA_FILE:-}" ] && [ -s "$INTERNAL_CA_FILE" ]; then
+        cp "$INTERNAL_CA_FILE" image/ca/internal-ca.crt
+      else
+        echo "INTERNAL_CA_FILE (file-type CI variable) is not set; set it or set SKIP_INTERNAL_CA=true"; exit 1
+      fi
     - CANDIDATE=$STAGING_REPO:candidate-$CI_COMMIT_SHORT_SHA
     - docker build --build-arg BASE_IMAGE="$BASE_IMAGE" --build-arg APT_MIRROR="$APT_MIRROR" -t "$CANDIDATE" image
     - docker run --rm -i "$CANDIDATE" sh -s < image/tests/smoke.sh   # no bind mount (remote daemon)
@@ -132,11 +147,18 @@ release:
     - IMAGE_REF=$RELEASE_REPO:$VERSION
     - export IMAGE_REF
     - if docker manifest inspect "$IMAGE_REF" >/dev/null 2>&1; then echo "$IMAGE_REF exists; versions are immutable, bump image/VERSION"; exit 1; fi
+    # Mirror the runner helper first (not governed by allowed_images). Registries
+    # with immutable tags refuse a second push, so skip it if the tag exists. Doing
+    # this before the ai-base push keeps a failure here from leaving ai-base half-released.
+    - |
+      if docker manifest inspect "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION" >/dev/null 2>&1; then
+        echo "helper $RUNNER_HELPER_VERSION already mirrored; skipping"
+      else
+        docker pull "$RUNNER_HELPER_SRC"
+        docker tag "$RUNNER_HELPER_SRC" "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"
+        docker push "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"
+      fi
     - docker pull "$CANDIDATE_REF"   # the scanned digest, not a tag
     - docker tag "$CANDIDATE_REF" "$IMAGE_REF"
     - docker push "$IMAGE_REF"
     - '[ -z "$SIGN_CMD" ] || sh -c "$SIGN_CMD"'
-    # Mirror the runner helper image (not governed by allowed_images).
-    - docker pull "$RUNNER_HELPER_SRC"
-    - docker tag "$RUNNER_HELPER_SRC" "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"
-    - docker push "$RUNNER_HELPER_DST:$RUNNER_HELPER_VERSION"

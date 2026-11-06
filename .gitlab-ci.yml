@@ -1,0 +1,23 @@
+# Minimal test pipeline. Image names are placeholders (*.example.internal):
+# point them at approved mirrors. The image build pipeline is separate:
+# set the image project's CI/CD configuration file to image/.gitlab-ci.yml.
+stages: [test]
+
+go-tests:
+  stage: test
+  image: registry.example.internal/approved/golang:1.26
+  script:
+    - cd services
+    - test -z "$(gofmt -l .)"
+    - go vet ./...
+    - go test ./... -race -count=1
+
+python-tests:
+  stage: test
+  image: registry.example.internal/approved/python:3
+  script:
+    - apt-get update -qq && apt-get install -y -qq curl jq shellcheck
+    - pip install pyyaml
+    - python3 -m unittest discover image/tests
+    - python3 -m unittest discover templates/tests
+    - cd probe && python3 -m unittest test_phase0_probe
