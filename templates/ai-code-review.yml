@@ -1,0 +1,33 @@
+# AI code review for merge requests. Include with a version tag (see ai-access.yml):
+#   include:
+#     - project: platform/ai-ci-templates
+#       ref: v1.0.0
+#       file:
+#         - templates/ai-access.yml
+#         - templates/ai-code-review.yml
+# Runs automatically once included. To make it manual, override in your project:
+#   ai-review:
+#     rules:
+#       - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
+#         when: never
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#         when: manual
+# For bulk work, use the batch service instead of this job.
+# Fork MRs are skipped: fork code would run under the Maintainer's identity.
+ai-review:
+  extends: .ai-access
+  interruptible: true
+  allow_failure: true # an AI outage must not block merges
+  variables:
+    GIT_DEPTH: "0"
+    AI_REVIEW_MODEL: example-model
+  rules:
+    - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - ai-review --diff-only --format codequality > review.json
+  artifacts:
+    expire_in: 1 day
+    reports:
+      codequality: review.json

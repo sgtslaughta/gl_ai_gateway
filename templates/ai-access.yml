@@ -1,0 +1,22 @@
+# AI access base job. Include from the template project with a version tag:
+#   include:
+#     - project: platform/ai-ci-templates
+#       ref: v1.0.0
+#       file: templates/ai-access.yml
+# Then: my-job: { extends: .ai-access, script: [...] }
+# Exports OPENAI_BASE_URL/OPENAI_API_KEY and ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY.
+# Bulk or batch work belongs on the batch service, not these jobs (30 min job limit).
+# Placeholder values below (*.example.internal) are overridden per deployment.
+.ai-access:
+  tags: [ai]
+  image: registry.example.internal/ai-hardened/ai-base:1.0.0
+  variables:
+    AI_STS_URL: https://sts.example.internal
+    AI_GATEWAY_URL: https://gateway.example.internal
+  id_tokens:
+    AI_ID_TOKEN:
+      aud: https://sts.example.internal
+  before_script:
+    - . ai-token
+  artifacts:
+    expire_in: 1 day
