@@ -13,7 +13,8 @@
 #       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 #         when: manual
 # For bulk work, use the batch service instead of this job.
-# Fork MRs are skipped: fork code would run under the Maintainer's identity.
+# The fork rule below only avoids noise. STS is what denies fork pipelines
+# (job_project_path must equal project_path).
 ai-review:
   extends: .ai-access
   interruptible: true

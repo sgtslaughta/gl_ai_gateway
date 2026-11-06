@@ -13,6 +13,7 @@ type GitLabClaims struct {
 	UserID         string `json:"user_id"`
 	UserLogin      string `json:"user_login"`
 	ProjectPath    string `json:"project_path"`
+	JobProjectPath string `json:"job_project_path"`
 	Ref            string `json:"ref"`
 	RefProtected   string `json:"ref_protected"`
 	SHA            string `json:"sha"`
@@ -24,14 +25,20 @@ type GitLabClaims struct {
 
 // Policy denial errors; Error() is the short reason code.
 var (
-	ErrRunnerNotAllowed = errors.New("runner_not_allowed")
-	ErrRefNotProtected  = errors.New("ref_not_protected")
+	ErrRunnerNotAllowed   = errors.New("runner_not_allowed")
+	ErrRefNotProtected    = errors.New("ref_not_protected")
+	ErrForkPipelineDenied = errors.New("fork_pipeline_denied")
 )
 
-// CheckPolicy applies the runner and schedule rules.
+// CheckPolicy applies the policy rules, all required: the runner is on the
+// allowlist, the job ran in the project the token names (no fork pipelines),
+// and sources other than push, web and merge_request_event use protected refs.
 func CheckPolicy(c GitLabClaims, cfg Config) error {
 	if !slices.Contains(cfg.RunnerIDs, c.RunnerID) {
 		return ErrRunnerNotAllowed
+	}
+	if c.JobProjectPath == "" || c.JobProjectPath != c.ProjectPath {
+		return ErrForkPipelineDenied
 	}
 	if !unprotectedOK(c.PipelineSource) && c.RefProtected != "true" {
 		return ErrRefNotProtected

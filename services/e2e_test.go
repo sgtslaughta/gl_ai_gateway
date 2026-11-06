@@ -83,7 +83,7 @@ func newStack(t *testing.T) *stack {
 		tk := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 			"iss": glIssuer, "aud": aud, "exp": time.Now().Add(time.Hour).Unix(),
 			"user_email": "a@example.internal", "user_id": "42", "user_login": "alice",
-			"project_path": "g/p", "ref": "main", "ref_protected": "true", "sha": "abc",
+			"project_path": "g/p", "job_project_path": "g/p", "ref": "main", "ref_protected": "true", "sha": "abc",
 			"pipeline_id": "100", "pipeline_source": "push", "job_id": "200", "runner_id": 7,
 		})
 		tk.Header["kid"] = "k1"

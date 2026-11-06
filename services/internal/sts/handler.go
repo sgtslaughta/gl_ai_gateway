@@ -51,22 +51,23 @@ func (h *Handler) routes() http.Handler {
 }
 
 type auditRecord struct {
-	Time     string `json:"time"`
-	User     string `json:"user"`
-	UserID   string `json:"user_id"`
-	DN       string `json:"dn"`
-	Project  string `json:"project"`
-	Ref      string `json:"ref"`
-	SHA      string `json:"sha"`
-	Pipeline string `json:"pipeline"`
-	Job      string `json:"job"`
-	Runner   int64  `json:"runner"`
-	Status   int    `json:"status"`
-	Reason   string `json:"reason"`
+	Time       string `json:"time"`
+	User       string `json:"user"`
+	UserID     string `json:"user_id"`
+	DN         string `json:"dn"`
+	Project    string `json:"project"`
+	JobProject string `json:"job_project_path"`
+	Ref        string `json:"ref"`
+	SHA        string `json:"sha"`
+	Pipeline   string `json:"pipeline"`
+	Job        string `json:"job"`
+	Runner     int64  `json:"runner"`
+	Status     int    `json:"status"`
+	Reason     string `json:"reason"`
 }
 
 func (h *Handler) decide(w http.ResponseWriter, c GitLabClaims, dn string, status int, reason string, resp any) {
-	rec := auditRecord{h.now().UTC().Format(time.RFC3339), c.UserLogin, c.UserID, dn, c.ProjectPath,
+	rec := auditRecord{h.now().UTC().Format(time.RFC3339), c.UserLogin, c.UserID, dn, c.ProjectPath, c.JobProjectPath,
 		c.Ref, c.SHA, c.PipelineID, c.JobID, c.RunnerID, status, reason}
 	if !h.writeAudit(rec) {
 		status, reason, resp = http.StatusInternalServerError, "audit_failed", nil
@@ -124,7 +125,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),
 		},
-		DN: dn, UserLogin: c.UserLogin, ProjectPath: c.ProjectPath, Ref: c.Ref, SHA: c.SHA,
+		DN: dn, UserLogin: c.UserLogin, ProjectPath: c.ProjectPath, JobProjectPath: c.JobProjectPath, Ref: c.Ref, SHA: c.SHA,
 		PipelineID: c.PipelineID, JobID: c.JobID, RunnerID: c.RunnerID,
 	})
 	if err != nil {

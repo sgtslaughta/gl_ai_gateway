@@ -62,7 +62,7 @@ func (e *env) idToken(t *testing.T, mod func(m jwt.MapClaims)) string {
 	m := jwt.MapClaims{
 		"iss": issuer, "aud": "sts", "exp": time.Now().Add(time.Hour).Unix(),
 		"user_email": "a@example.internal", "user_id": "42", "user_login": "alice",
-		"project_path": "g/p", "ref": "main", "ref_protected": "true", "sha": "abc",
+		"project_path": "g/p", "job_project_path": "g/p", "ref": "main", "ref_protected": "true", "sha": "abc",
 		"pipeline_id": "100", "pipeline_source": "push", "job_id": "200", "runner_id": 7,
 	}
 	if mod != nil {
@@ -119,7 +119,7 @@ func TestValidExchange(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	c, resp := parseOut(t, e, w)
-	if c.DN != "cn=alice,dc=example,dc=internal" || c.ProjectPath != "g/p" || c.Ref != "main" || c.SHA != "abc" ||
+	if c.DN != "cn=alice,dc=example,dc=internal" || c.ProjectPath != "g/p" || c.JobProjectPath != "g/p" || c.Ref != "main" || c.SHA != "abc" ||
 		c.PipelineID != "100" || c.JobID != "200" || c.RunnerID != 7 || c.UserLogin != "alice" {
 		t.Fatalf("%+v", c)
 	}
@@ -182,6 +182,8 @@ func TestDenials(t *testing.T) {
 		reason string
 	}{
 		{"runner", func(m jwt.MapClaims) { m["runner_id"] = 9 }, okLookup, 403, "runner_not_allowed"},
+		{"fork", func(m jwt.MapClaims) { m["job_project_path"] = "fork/p" }, okLookup, 403, "fork_pipeline_denied"},
+		{"no job path", func(m jwt.MapClaims) { delete(m, "job_project_path") }, okLookup, 403, "fork_pipeline_denied"},
 		{"schedule", func(m jwt.MapClaims) { m["pipeline_source"] = "schedule"; m["ref_protected"] = "false" }, okLookup, 403, "ref_not_protected"},
 		{"unmapped", nil, func(context.Context, string) (string, error) { return "", context.Canceled }, 403, "identity_not_mapped"},
 		{"nil lookup", nil, nil, 403, "identity_not_mapped"},
@@ -229,5 +231,14 @@ func TestAuditFailureFailsClosed(t *testing.T) {
 	w := e.post(exchange(e.idToken(t, nil)))
 	if w.Code != 500 || !strings.Contains(w.Body.String(), "audit_failed") || strings.Contains(w.Body.String(), "access_token") {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestForkAuditHasJobProject(t *testing.T) {
+	e := newEnv(t, okLookup)
+	w := e.post(exchange(e.idToken(t, func(m jwt.MapClaims) { m["job_project_path"] = "fork/p" })))
+	if w.Code != 403 || strings.Contains(w.Body.String(), "access_token") ||
+		!strings.Contains(e.audit.String(), `"job_project_path":"fork/p"`) {
+		t.Fatal(w.Code, w.Body.String(), e.audit.String())
 	}
 }

@@ -9,10 +9,10 @@ func TestCheckPolicy(t *testing.T) {
 		c    GitLabClaims
 		want error
 	}{
-		{"bad runner", GitLabClaims{RunnerID: 8, PipelineSource: "push"}, ErrRunnerNotAllowed},
-		{"schedule unprotected", GitLabClaims{RunnerID: 7, PipelineSource: "schedule", RefProtected: "false"}, ErrRefNotProtected},
-		{"push ok", GitLabClaims{RunnerID: 7, PipelineSource: "push", RefProtected: "false"}, nil},
-		{"schedule protected ok", GitLabClaims{RunnerID: 7, PipelineSource: "schedule", RefProtected: "true"}, nil},
+		{"bad runner", GitLabClaims{ProjectPath: "g/p", JobProjectPath: "g/p", RunnerID: 8, PipelineSource: "push"}, ErrRunnerNotAllowed},
+		{"schedule unprotected", GitLabClaims{ProjectPath: "g/p", JobProjectPath: "g/p", RunnerID: 7, PipelineSource: "schedule", RefProtected: "false"}, ErrRefNotProtected},
+		{"push ok", GitLabClaims{ProjectPath: "g/p", JobProjectPath: "g/p", RunnerID: 7, PipelineSource: "push", RefProtected: "false"}, nil},
+		{"schedule protected ok", GitLabClaims{ProjectPath: "g/p", JobProjectPath: "g/p", RunnerID: 7, PipelineSource: "schedule", RefProtected: "true"}, nil},
 	}
 	for _, tc := range cases {
 		if got := CheckPolicy(tc.c, cfg); got != tc.want {
@@ -35,7 +35,7 @@ func TestConfigTTLCap(t *testing.T) {
 func TestRefProtectionBySource(t *testing.T) {
 	cfg := Config{RunnerIDs: []int64{7}}
 	check := func(src, prot string) error {
-		return CheckPolicy(GitLabClaims{RunnerID: 7, PipelineSource: src, RefProtected: prot}, cfg)
+		return CheckPolicy(GitLabClaims{ProjectPath: "g/p", JobProjectPath: "g/p", RunnerID: 7, PipelineSource: src, RefProtected: prot}, cfg)
 	}
 	for _, s := range []string{"push", "web", "merge_request_event"} {
 		if err := check(s, "false"); err != nil {
@@ -53,6 +53,18 @@ func TestRefProtectionBySource(t *testing.T) {
 	for _, p := range []string{"", "True", "1", "yes"} {
 		if check("schedule", p) != ErrRefNotProtected {
 			t.Errorf("ref_protected %q treated as protected", p)
+		}
+	}
+}
+
+func TestForkPipelineDenied(t *testing.T) {
+	cfg := Config{RunnerIDs: []int64{7}}
+	for _, prot := range []string{"true", "false"} {
+		for job, want := range map[string]error{"g/p": nil, "fork/p": ErrForkPipelineDenied, "": ErrForkPipelineDenied} {
+			c := GitLabClaims{RunnerID: 7, PipelineSource: "push", RefProtected: prot, ProjectPath: "g/p", JobProjectPath: job}
+			if got := CheckPolicy(c, cfg); got != want {
+				t.Errorf("prot=%s job=%q: %v", prot, job, got)
+			}
 		}
 	}
 }

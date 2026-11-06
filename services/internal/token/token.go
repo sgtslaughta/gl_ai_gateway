@@ -18,14 +18,15 @@ import (
 // Claims are the STS token claims.
 type Claims struct {
 	jwt.RegisteredClaims
-	DN          string `json:"dn"`
-	UserLogin   string `json:"user_login"`
-	ProjectPath string `json:"project_path"`
-	Ref         string `json:"ref"`
-	SHA         string `json:"sha"`
-	PipelineID  string `json:"pipeline_id"`
-	JobID       string `json:"job_id"`
-	RunnerID    int64  `json:"runner_id"`
+	DN             string `json:"dn"`
+	UserLogin      string `json:"user_login"`
+	ProjectPath    string `json:"project_path"`
+	JobProjectPath string `json:"job_project_path"`
+	Ref            string `json:"ref"`
+	SHA            string `json:"sha"`
+	PipelineID     string `json:"pipeline_id"`
+	JobID          string `json:"job_id"`
+	RunnerID       int64  `json:"runner_id"`
 }
 
 const (
