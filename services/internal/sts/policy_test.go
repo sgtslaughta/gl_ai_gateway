@@ -10,7 +10,7 @@ func TestCheckPolicy(t *testing.T) {
 		want error
 	}{
 		{"bad runner", GitLabClaims{RunnerID: 8, PipelineSource: "push"}, ErrRunnerNotAllowed},
-		{"schedule unprotected", GitLabClaims{RunnerID: 7, PipelineSource: "schedule", RefProtected: "false"}, ErrScheduleRefNotProtected},
+		{"schedule unprotected", GitLabClaims{RunnerID: 7, PipelineSource: "schedule", RefProtected: "false"}, ErrRefNotProtected},
 		{"push ok", GitLabClaims{RunnerID: 7, PipelineSource: "push", RefProtected: "false"}, nil},
 		{"schedule protected ok", GitLabClaims{RunnerID: 7, PipelineSource: "schedule", RefProtected: "true"}, nil},
 	}
@@ -29,5 +29,30 @@ func TestConfigTTLCap(t *testing.T) {
 	c.TokenTTL = 30 * 60e9
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRefProtectionBySource(t *testing.T) {
+	cfg := Config{RunnerIDs: []int64{7}}
+	check := func(src, prot string) error {
+		return CheckPolicy(GitLabClaims{RunnerID: 7, PipelineSource: src, RefProtected: prot}, cfg)
+	}
+	for _, s := range []string{"push", "web", "merge_request_event"} {
+		if err := check(s, "false"); err != nil {
+			t.Errorf("%s unprotected: %v", s, err)
+		}
+	}
+	for _, s := range []string{"schedule", "trigger", "pipeline", "parent_pipeline", "api", "bogus", ""} {
+		if err := check(s, "false"); err != ErrRefNotProtected {
+			t.Errorf("%q unprotected: %v", s, err)
+		}
+		if err := check(s, "true"); err != nil {
+			t.Errorf("%q protected: %v", s, err)
+		}
+	}
+	for _, p := range []string{"", "True", "1", "yes"} {
+		if check("schedule", p) != ErrRefNotProtected {
+			t.Errorf("ref_protected %q treated as protected", p)
+		}
 	}
 }

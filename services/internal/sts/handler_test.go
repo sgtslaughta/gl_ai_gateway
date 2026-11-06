@@ -182,7 +182,7 @@ func TestDenials(t *testing.T) {
 		reason string
 	}{
 		{"runner", func(m jwt.MapClaims) { m["runner_id"] = 9 }, okLookup, 403, "runner_not_allowed"},
-		{"schedule", func(m jwt.MapClaims) { m["pipeline_source"] = "schedule"; m["ref_protected"] = "false" }, okLookup, 403, "schedule_ref_not_protected"},
+		{"schedule", func(m jwt.MapClaims) { m["pipeline_source"] = "schedule"; m["ref_protected"] = "false" }, okLookup, 403, "ref_not_protected"},
 		{"unmapped", nil, func(context.Context, string) (string, error) { return "", context.Canceled }, 403, "identity_not_mapped"},
 		{"nil lookup", nil, nil, 403, "identity_not_mapped"},
 		{"wrong aud", func(m jwt.MapClaims) { m["aud"] = "other" }, okLookup, 401, "invalid_token"},

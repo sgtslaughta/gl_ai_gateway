@@ -24,8 +24,8 @@ type GitLabClaims struct {
 
 // Policy denial errors; Error() is the short reason code.
 var (
-	ErrRunnerNotAllowed        = errors.New("runner_not_allowed")
-	ErrScheduleRefNotProtected = errors.New("schedule_ref_not_protected")
+	ErrRunnerNotAllowed = errors.New("runner_not_allowed")
+	ErrRefNotProtected  = errors.New("ref_not_protected")
 )
 
 // CheckPolicy applies the runner and schedule rules.
@@ -33,8 +33,19 @@ func CheckPolicy(c GitLabClaims, cfg Config) error {
 	if !slices.Contains(cfg.RunnerIDs, c.RunnerID) {
 		return ErrRunnerNotAllowed
 	}
-	if c.PipelineSource == "schedule" && c.RefProtected != "true" {
-		return ErrScheduleRefNotProtected
+	if !unprotectedOK(c.PipelineSource) && c.RefProtected != "true" {
+		return ErrRefNotProtected
 	}
 	return nil
+}
+
+// unprotectedOK is the exact allowlist of sources a person starts directly.
+// Every other source (schedule, trigger, pipeline, parent_pipeline, api,
+// unknown or empty) needs a protected ref.
+func unprotectedOK(source string) bool {
+	switch source {
+	case "push", "web", "merge_request_event":
+		return true
+	}
+	return false
 }
